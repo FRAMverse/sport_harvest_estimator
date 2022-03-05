@@ -1,0 +1,223 @@
+---
+title: "Assessment of sport_harvest_estimator"
+author: "dan.auerbach@dfw.wa.gov"
+date: "`r Sys.Date()`"
+output:
+  wdfwTemplates::wdfw_html_format2
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(comment = "#>", warning = F)
+
+library("tidyverse")
+library("patchwork")
+library("gt")
+
+theme_set(theme_light())
+
+load("O:/code/sport_harvest_estimator/sport_harvest_estimator.RData")
+
+a5_21 <- left_join(
+  #report table 1.2 estimates 
+  expand_grid(area_code = "05", yr = "2021", ts = 2:4) |> mutate(pst = c(433+0, 2772+55, 16242+95)),
+  #2021 preseason FRAM
+  fs_ps_spt |> select(area_code, yr, ts, pre = val),
+  by = c("area_code", "yr", "ts")
+  ) |> 
+  select(area_code, yr, ts, pre, pst)
+
+```
+
+The [sport_harvest_estimator](https://github.com/FRAMverse/sport_harvest_estimator) is designed to present the best available data in ways that encourage a structured, quantitative consideration of the uncertainties of fisheries planning. It facilitates the rapid examination of how a set of assumptions about "average" effort and rates of coho retention do or do not align with expectations, as well as whether these assumptions yield values that maintain or depart from past preseason FRAM inputs and post-season harvest estimates. This process enables managers and analysts to better quantify the potential consequences of various real-world processes affecting sport fisheries (e.g., spatio-temporal effort shifts, regulation shifts).
+
+This analysis generates results following from pre-specified, "blind" or "naive" applications of the method, thereby excluding the data exploration that is one of the primary goals of the approach. However, this mode of assessment nonetheless offers insight into some of the strengths and limitations of the method.
+
+Bringing data to bear as quickly as possible was another key motivation for development of the sport_harvest_estimator, and this assessment first presents results relative to the most recent 2021 season for Area 5, where post-season estimates have just been completed (this also suggests how the method is suited to in-season use). First, a "default" application of the method is tested for the ability to reproduce final estimates given 2021 data. It is then demonstrated in an "as-applied" mode, given the data that would have been available during the 2021 North of Falcon (NOF) process. 
+
+# Area 5 2021, reproducing 2021 given 2021 dockside
+
+The table below illustrates use of the median coho-kept-per-angler-per-day (*hapd*) and the sample-rate expanded median anglers-per-day (*apd*) for only the 2021 dockside creel data. The harvest estimation method result (column **pred**) is shown relative to the final NOF2021 coho FRAM inputs (**pre**) and the recently completed 2021 post-season estimate (**pst**). The **pst-pre** and **pst-pred** show the respective differences against the post-season estimate. Values in the final column are shaded light green if the new method improves in absolute error and darker green if it both improves in absolute error and does not underestimate catch.
+
+This test indicates that the central tendencies of the sampled data can generate values closer to post-season estimates than were developed in the preseason, but it does not demonstrate preseason skill. In addition, the considerable remaining error in timestep 3 (August) suggests the scope for continued improvements.
+
+```{r a5_repro2021}
+left_join(
+  #dockside median anglers-per-day and coho kept-per-angler-per-day
+  pssp |> 
+    filter(area_code == "05", yr == "2021", between(ts, 2, 4)) |> 
+    group_by(area_code, yr, ts, wkend) |> 
+    summarise(across(c(anglers, coho_kpa_ad), median), .groups = "drop")
+  ,
+  #per timestep median sampling rates
+  rmis_cs |> select("area_code", "year", "yr", "ts", "sr") |> 
+    filter(area_code == "05", between(year, 2014, 2020)) |> 
+    group_by(area_code, ts) |> 
+    summarise(across(c(sr), median), .groups = "drop")
+  ,
+  by = c("area_code", "ts")
+) |> 
+  mutate(
+    apd_expnd = anglers / sr,
+    df = case_when(
+      wkend == "wkday" & ts %in% 2:3 ~ 18,
+      wkend == "wkend" & ts %in% 2:3 ~ 13,
+      wkend == "wkday" & ts == 4 ~ 18,
+      wkend == "wkend" & ts == 4 ~ 12
+    ),
+    pred = df * apd_expnd * coho_kpa_ad
+  ) |> 
+  group_by(area_code, yr, ts) |> 
+  summarise(pred = sum(pred), .groups = "drop") |> 
+  left_join(a5_21, by = c("area_code", "yr", "ts")) |> 
+  mutate(
+    `pst-pre` = pst - pre,
+    `pst-pred` = pst - pred
+  ) |> 
+  gt() |> 
+  fmt_integer(columns = -c(area_code, yr)) |> 
+  tab_style(
+    style = cell_fill("#B9FAC4"),
+    locations = cells_body(
+      columns = `pst-pred`,
+      rows = abs(`pst-pred`) < abs(`pst-pre`)
+    )
+  ) |> 
+  tab_style(
+    style = cell_fill("#39D155"),
+    locations = cells_body(
+      columns = `pst-pred`,
+      rows = (abs(`pst-pred`) < abs(`pst-pre`)) & `pst-pred` <= 0
+    )
+  ) |> 
+  gt::tab_header(title = "reproducing 2021 given 2021 dockside obs") 
+
+```
+
+# Area 5 2021, As-applied NOF2021, given 2014-2020 dockside
+
+The table in this section replaces the single year of 2021 data with that from 2014-2020 which would have been available during NOF2021, but otherwise uses similar distributional assumptions to the preceding section (pooled year median *hapd* and sample-rate expanded median *apd*; note that 2016 and 2017 data are not available due to closures and that older mixed regulations prompted this set of years). The table also follows the conventions, with harvest estimation method result in column **pred** alongside the final NOF2021 coho FRAM inputs **pre** and the 2021 post-season estimate **pst**. As above, the **pst-pre** and **pst-pred** show the respective differences against the post-season estimate, with values in the final column shaded light green if the new method improves in absolute error and darker green if it both improves in absolute error and does not underestimate catch.
+
+In this more realistic test, the new method outperforms the existing approach in July and September. Performance for both approaches was similarly bad for the August timestep, but this application of the new method did not produce an improvement.
+
+```{r a5_nof2021}
+left_join(
+  #dockside median anglers-per-day and coho kept-per-angler-per-day
+  pssp |> 
+    filter(area_code == "05", yr %in% as.character(2014:2020), between(ts, 2, 4)) |> 
+    group_by(area_code, yr, ts, wkend) |> 
+    summarise(across(c(anglers, coho_kpa_ad), median), .groups = "drop"),
+  #per timestep median sampling rates
+  rmis_cs |> filter(area_code == "05", between(year, 2014, 2020)),
+  by = c("area_code", "yr","ts")
+  ) |> 
+  mutate(apd_expnd = anglers / sr) |>
+  #generate the pooled medians across years
+  group_by(area_code, ts, wkend) |> 
+  summarise(across(c(apd_expnd, coho_kpa_ad), median), .groups = "drop") |> 
+  mutate(
+    yr = "2021",
+    df = case_when(
+      wkend == "wkday" & ts %in% 2:3 ~ 18,
+      wkend == "wkend" & ts %in% 2:3 ~ 13,
+      wkend == "wkday" & ts == 4 ~ 18,
+      wkend == "wkend" & ts == 4 ~ 12
+      ),
+    pred = df * apd_expnd * coho_kpa_ad
+  ) |> 
+  group_by(area_code, yr, ts) |> 
+  summarise(pred = sum(pred), .groups = "drop") |> 
+  left_join(a5_21, by = c("area_code", "yr", "ts")) |> 
+  mutate(
+    `pst-pre` = pst - pre,
+    `pst-pred` = pst - pred
+  ) |> 
+  gt() |> 
+  fmt_integer(columns = -c(area_code, yr)) |> 
+  tab_style(
+    style = cell_fill("#B9FAC4"),
+    locations = cells_body(
+      columns = `pst-pred`,
+      rows = abs(`pst-pred`) < abs(`pst-pre`)
+    )
+  ) |> 
+  tab_style(
+    style = cell_fill("#39D155"),
+    locations = cells_body(
+      columns = `pst-pred`,
+      rows = (abs(`pst-pred`) < abs(`pst-pre`)) & `pst-pred` <= 0
+    )
+  ) |> 
+  gt::tab_header(title = "As-applied 2021, from 2014-2020 pooled medians") 
+
+```
+
+# Areas 5-11, as-applied NOF2020, given 2014-2019 dockside
+
+This section extends the previous concept to additional areas, reducing the data to a 2014-2019 window that would have been available during NOF2020 and comparing the actual preseason **pre** and potential **pred** to the values in the 2020 CoTC FRAM postseason run (as are made available to the user in the tool). The distributional assumptions and table conventions remain consistent.
+
+This test demonstrates improved performance across these areas during the important September timestep 4, with the exception of A10. While the 2020-only dockside values do closely reproduce the postseason estimate (similar to the first section above, not shown), this outcome points to the need for further scrutiny in this case. Performance in this is application is more mixed for earlier summer time steps 2 (July) and 3 (August), although several of the differences in errors are well within the range of other sources of model error. Perhaps more importantly, some instances of an apparent lack of performance improvement, such as A7 T3, arguably reflect the constraints of this analysis rather than a limitation of the tool. The post-season value is substantially underestimated in both preseason columns, but the harvest estimator method provides a clear depiction of recent trends in pre-post performance for this area-timestep that would prompt the use of a higher distributional moment in actual application. 
+
+```{r a5_11_nof2020}
+left_join(
+  #dockside median anglers-per-day and coho kept-per-angler-per-day
+  pssp |> 
+    filter(area_code %in% c("05","06","07","09","10","11"), yr %in% as.character(2014:2019), between(ts, 2, 4)) |> 
+    group_by(area_code, yr, ts, wkend) |> 
+    summarise(across(c(anglers, coho_kpa), median), .groups = "drop"),
+  #per timestep median sampling rates
+  rmis_cs,
+  by = c("area_code", "yr","ts")
+  ) |>
+  #exclude NA sample rates rather than try to replicate dynamic median generation
+  filter(!is.na(sr)) |> 
+  mutate(apd_expnd = anglers / sr) |>
+  #generate the pooled medians across years
+  group_by(area_code, ts, wkend) |> 
+  summarise(across(c(apd_expnd, coho_kpa), median), .groups = "drop") |> 
+  mutate(
+    yr = "2020",
+    df = case_when(
+      wkend == "wkday" & ts %in% 2:3 ~ 18,
+      wkend == "wkend" & ts %in% 2:3 ~ 13,
+      wkend == "wkday" & ts == 4 ~ 18,
+      wkend == "wkend" & ts == 4 ~ 12
+    ),
+    pred = df * apd_expnd * coho_kpa
+  ) |> 
+  group_by(area_code, yr, ts) |> 
+  summarise(pred = sum(pred), .groups = "drop") |> 
+  left_join(
+    fs_ps_spt |> select(type, area_code, yr, ts, val),
+    by = c("area_code", "yr", "ts")
+  ) |> 
+  pivot_wider(names_from = type, values_from = val) |> 
+  mutate(
+    `pst-pre` = pst - pre,
+    `pst-pred` = pst - pred
+  ) |> 
+  gt(rowname_col = 'area_code') |> 
+  cols_hide("yr") |> 
+  fmt_integer(columns = -c(area_code, yr)) |> 
+  tab_style(
+    style = cell_fill("#B9FAC4"),
+    locations = cells_body(
+      columns = `pst-pred`,
+      rows = abs(`pst-pred`) < abs(`pst-pre`)
+    )
+  ) |> 
+  tab_style(
+    style = cell_fill("#39D155"),
+    locations = cells_body(
+      columns = `pst-pred`,
+      rows = (abs(`pst-pred`) < abs(`pst-pre`)) & `pst-pred` <= 0
+    )
+  ) |> 
+  gt::tab_header(title = "As-applied 2020, from 2014-2019 pooled medians") 
+
+```
+
+# Conclusion
+
+This analysis has shown that in a "default" mode, uninformed by managers' experience and expectations for a given year, the harvest estimator method was capable of generating more accurate coho FRAM inputs. However, performance gains were not uniform across areas and timesteps, and the comparison underscored the importance of ongoing refinement. This approach is well-positioned to take advantage of increasingly rich datasets as additional monitoring investments are made in Puget Sound recreational coho fisheries.  

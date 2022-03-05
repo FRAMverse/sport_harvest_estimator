@@ -142,12 +142,26 @@ pssp <- coho_regulations |>
 
 ```{r rmis_data_prep, eval=FALSE}
 #Sample rates based on RMIS catch-sample query by AHB
-rmis_cs <- readxl::read_excel("T:/DFW-Salmon Mgmt Modeling Team - General/Preseason/Coho/2022/SportSampleRateCoho2000_2020.xlsx", sheet = "Summary") |> 
+#substituting creel-based total caught from TG where possible, after 2015, mostly A5
+
+# rmis_cs <- readxl::read_excel("T:/DFW-Salmon Mgmt Modeling Team - General/Preseason/Coho/2022/SportSampleRateCoho2000_2020.xlsx", sheet = "Summary") |> 
+#   mutate(
+#     area_code = str_pad(str_squish(str_remove_all(catch_location_name, "MARINE SPORT AREA |MARINE SPORT PCA|\\.")), width = 2, pad = "0"),
+#     yr = factor(catch_year)
+#   ) |> #count(area_code)
+#   select(FisheryID = `Fish ID`, area_code, year= catch_year, yr, ts = TS, caught = `Sum of number_caught`, sampled = `Sum of number_sampled`, sr = Rate) |> 
+#   filter(
+#     !is.na(area_code),
+#     caught > 10, sampled > 10
+#     )
+
+rmis_cs <- readxl::read_excel("T:/DFW-Salmon Mgmt Modeling Team - General/Preseason/Coho/2022/SportSampleRateCoho2000_2020_creel_subs.xlsx", sheet = "creel_est_subs") |> 
   mutate(
     area_code = str_pad(str_squish(str_remove_all(catch_location_name, "MARINE SPORT AREA |MARINE SPORT PCA|\\.")), width = 2, pad = "0"),
-    yr = factor(catch_year)
-  ) |> #count(area_code)
-  select(FisheryID = `Fish ID`, area_code, year= catch_year, yr, ts = TS, caught = `Sum of number_caught`, sampled = `Sum of number_sampled`, sr = Rate) |> 
+    yr = factor(year),
+    sr = if_else(is.na(sr_creel_sub), sr, sr_creel_sub)
+  ) |> 
+  select(FisheryID, area_code, year, yr, ts, caught, sampled, sr) |> 
   filter(
     !is.na(area_code),
     caught > 10, sampled > 10
@@ -179,7 +193,7 @@ fs_ps_spt <- bind_rows(
 ```
 
 ```{r crc_data_prep, eval=FALSE}
-crc <- readRDS("T:/DFW-Salmon Mgmt Modeling Team - General/Catch datasets/CRC/d_spt_hvst_est_20220126.rds") |>
+crc <- readRDS("T:/DFW-Salmon Mgmt Modeling Team - General/Catch datasets/CRC/d_spt_hvst_est_20220302.rds") |>
   filter(
     species == "Coho", between(catchyear, 2009, 2022),
     areacode %in% c("5","6","7","81","82","9","10","11","12","13")
