@@ -414,10 +414,11 @@ gt::render_gt({
         c(anglers),
         list(
           q50 = ~round(quantile(., 0.5, na.rm=T), 0),
+          mu = ~round(mean(., na.rm=T), 0),
           q95 = ~round(quantile(., 0.95, na.rm=T), 0)
         ),
         .names = "{.fn}"), .groups = "drop") |>
-    pivot_wider(names_from = wkend, values_from = c(n_obs, q50, q95)) |> 
+    pivot_wider(names_from = wkend, values_from = c(n_obs, q50, mu, q95)) |> 
     arrange(desc(yr)) |>
     left_join(
       rmis_cs_at() |> select(area_code, yr, sr),
