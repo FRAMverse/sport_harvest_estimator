@@ -464,6 +464,7 @@ gt::render_gt({
       fns = list(
         min = ~min(.),
         med = ~median(.),
+        mean = ~mean(.),
         max = ~max(.)
       ),
       formatter = fmt_number
@@ -490,7 +491,8 @@ renderPlot({
                  q25 = ~round(quantile(., 0.25, na.rm=T), 2),
                  q50 = ~round(quantile(., 0.5, na.rm=T), 2),
                  q75 = ~round(quantile(., 0.75, na.rm=T), 2),
-                 q95 = ~round(quantile(., 0.95, na.rm=T), 2)
+                 q95 = ~round(quantile(., 0.95, na.rm=T), 2),
+                 mu = ~round(mean(., na.rm=T), 2)
                ),
                .names = "{.fn}"), .groups = "drop") |>
       arrange(desc(yr))
@@ -507,7 +509,8 @@ renderPlot({
                  q25 = ~round(quantile(., 0.25, na.rm=T), 2),
                  q50 = ~round(quantile(., 0.5, na.rm=T), 2),
                  q75 = ~round(quantile(., 0.75, na.rm=T), 2),
-                 q95 = ~round(quantile(., 0.95, na.rm=T), 2)
+                 q95 = ~round(quantile(., 0.95, na.rm=T), 2),
+                 mu = ~round(mean(., na.rm=T), 2)
                ),
                .names = "{.fn}"), .groups = "drop")
   )
@@ -517,10 +520,12 @@ renderPlot({
     coord_flip() +
     geom_linerange(aes(ymin = q05, ymax = q95), position = position_dodge(width = 0.4)) +
     geom_pointrange(aes(ymin = q25, ymax = q75), size = 1.1, position = position_dodge(width = 0.4)) +
+    geom_point(aes(x = yr, y = mu), shape = 4, size = 6, position = position_dodge(width = 0.4)) +
     geom_text(aes(x = yr, y = 0, label = n_obs), nudge_y = -0.05) +
-    geom_text(aes(x = yr, y = q05, label = q05), position = position_dodge(width = 0.9)) +
-    geom_text(aes(x = yr, y = q50, label = q50), position = position_dodge(width = 1.2)) +
-    geom_text(aes(x = yr, y = q95, label = q95), position = position_dodge(width = 0.9)) +
+    geom_text(aes(x = yr, y = q05, label = q05), position = position_dodge(width = 1.1)) +
+    geom_text(aes(x = yr, y = q50, label = q50), position = position_dodge(width = 1.3)) +
+    geom_text(aes(x = yr, y = mu, label = mu), position = position_dodge(width = 1.5)) +
+    geom_text(aes(x = yr, y = q95, label = q95), position = position_dodge(width = 1.1)) +
     geom_hline(
       data = tibble(
         wkend = c("wkday", "wkend"), 
