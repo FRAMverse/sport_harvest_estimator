@@ -259,21 +259,21 @@ radioButtons("focal_ts", label = "Focal Timestep",
 ```{r valuebox}
 renderValueBox({
   valueBox(
-    value = paste0("Weekday: ", wday_anglers(), " anglers, ", wday_harvest(), " harvest"),
+    value = paste0("Weekday: ", round(wday_anglers()), " anglers, ", round(wday_harvest()), " harvest"),
     icon = "fa-fish")
   })
 
 renderValueBox({
   valueBox(
-    value = paste0("Weekend: ", wend_anglers(), " anglers, ", wend_harvest(), " harvest"),
+    value = paste0("Weekend: ", round(wend_anglers()), " anglers, ", round(wend_harvest()), " harvest"),
     icon = "fa-fish")
   })
 
 renderValueBox({
   valueBox(
     value = paste0("Total: ",
-                   wday_anglers()+wend_anglers(), " anglers, ",
-                   wday_harvest()+wend_harvest(), " harvest"),
+                   round(wday_anglers()+wend_anglers()), " anglers, ",
+                   round(wday_harvest()+wend_harvest()), " harvest"),
     icon = "fa-fish")
   })
 
