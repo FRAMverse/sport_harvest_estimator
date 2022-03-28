@@ -1,0 +1,273 @@
+---
+title: "A5/6 catches relative to preseason coho FRAM cohort"
+author: "D Auerbach, A Hagen-Breaux"
+date: "2022-03-10"
+output:
+  wdfwTemplates::wdfw_html_format2
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(comment = "#>", warning = F, fig.width = 8, fig.height = 5)
+
+# results = F,
+
+library("tidyverse")
+library("readxl")
+library("odbc")
+
+library("gt")
+library("patchwork")
+
+library("framr")
+
+theme_set(theme_light())
+
+pal <- c("#2D3F4A", "#C0A43D", "#8A6172", "#748A52", "#CCBA98", "#69A2E4")
+
+load("O:/code/sport_harvest_estimator/sport_harvest_estimator.RData")
+```
+
+This analysis addresses the question of whether preseason forecast cohorts $cohort_{pre}$ (i.e., returning run sizes) are an effective predictor of estimated actual catches $catch_{post}$. That is, does $catch_{post} \sim cohort_{pre}$ hold? The catches are the quantity of interest, the forecast is the quantity that is available. If a relationship exists between post-season estimates of catches or encounters and post-season estimates of returning cohorts, then the utility of that relationship in the preseason depends on how well the preseason cohort forecasts capture the post-season mortality estimates. As illustrated below, basing the preseason catch estimate on the preseason forecast does not appear to be an effective approach to accurately projecting catches.
+
+
+# Preseason starting cohorts
+
+First get the forecasts, taken as the time 1 *StartCohort*.
+
+```{r}
+cohort_pre_ps <- framr::read_coho_cohort(mdb_pre, stocks = 1:126)
+```
+
+# Total observed catch ~ total forecast cohort
+
+## All years since 2009
+
+While a linear fit is possible, the closure in 2016 appears to exert considerable leverage, likely driving any fitted relationship. More importantly, the scatter shows a clear separation between older and more recent years (with both suggesting a negative correlation).
+
+```{r}
+cc_tot <- inner_join(
+  fs_ps_spt |> 
+    filter(type == "pst", area_code %in% c("05", "06")) |> 
+    group_by(type, area_code, yr) |> 
+    summarise(catch_tot = sum(val), .groups = "drop")
+  ,
+  cohort_pre_ps |> 
+    group_by(yr = RunYear) |> 
+    summarise(cohort_tot = sum(cohort), .groups = "drop")
+  ,
+  by = "yr"
+)
+```
+
+```{r}
+cc_tot |> 
+  ggplot(aes(cohort_tot, catch_tot)) + 
+  geom_smooth(method = "lm", se=F) +
+  geom_text(aes(label = yr)) + 
+  facet_wrap(~area_code, scales = "free")
+```
+
+However, the A6 linear relationship is weakly significant at 5%.
+
+```{r echo=TRUE, results=T}
+summary(lm(catch_tot ~ cohort_tot, data = filter(cc_tot, area_code == "05")))
+summary(lm(catch_tot ~ cohort_tot, data = filter(cc_tot, area_code == "06")))
+```
+
+## Excluding 2016 only
+
+Removing 2016 underscores that a simple linear fit is possible but ill-advised.
+
+```{r}
+cc_tot |> 
+  filter(yr != "2016") |> 
+  ggplot(aes(cohort_tot, catch_tot)) + 
+  geom_smooth(method = "lm", se=F) +
+  geom_text(aes(label = yr)) + 
+  facet_wrap(~area_code, scales = "free")
+```
+
+And removing 2106 also makes the A6 relationship non-significant.
+
+```{r}
+summary(lm(catch_tot ~ cohort_tot, data = filter(cc_tot, area_code == "05", yr != "2016")))
+summary(lm(catch_tot ~ cohort_tot, data = filter(cc_tot, area_code == "06", yr != "2016")))
+```
+
+## Since 2017
+
+Finally, a focus on the most recent years indicates that the preseason cohort does not effectively inform the postseason catch. 
+
+```{r}
+cc_tot |> 
+  filter(yr %in% as.character(2017:2021)) |> 
+  ggplot(aes(cohort_tot, catch_tot)) + 
+  geom_smooth(method = "lm", se=F) +
+  geom_text(aes(label = yr)) + 
+  facet_wrap(~area_code, scales = "free")
+```
+
+```{r}
+summary(lm(catch_tot ~ cohort_tot, data = filter(cc_tot, area_code == "05", yr %in% as.character(2017:2021))))
+summary(lm(catch_tot ~ cohort_tot, data = filter(cc_tot, area_code == "06", yr %in% as.character(2017:2021))))
+
+```
+
+# Marked catch ~ marked cohort
+
+Nonetheless, given the prevalence of MSF opportunity, it may be preferable to examine only the marked cohort.
+
+```{r }
+cc_m <- inner_join(
+  fs_ps_spt |> 
+    filter(type == "pst", area_code %in% c("05", "06")) |> 
+    group_by(type, area_code, yr) |> 
+    summarise(catch_tot = sum(val), .groups = "drop")
+  ,
+  cohort_pre_ps |> 
+    filter(StockID %% 2 < 1) |> 
+    group_by(yr = RunYear) |> 
+    summarise(cohort_m = sum(cohort), .groups = "drop")
+  ,
+  by = "yr"
+)
+```
+
+Similar to the total cohort, the relationship is highly leveraged by 2016 and effectively absent since 2017.
+
+```{r fig.height=7}
+(cc_m |> 
+  ggplot(aes(cohort_m, catch_tot)) + 
+  geom_smooth(method = "lm", se=F) +
+  geom_text(aes(label = yr)) + 
+  facet_wrap(~area_code, scales = "free")
+)+(
+cc_m |> 
+  filter(yr != "2016") |> 
+  ggplot(aes(cohort_m, catch_tot)) + 
+  geom_smooth(method = "lm", se=F) +
+  geom_text(aes(label = yr)) + 
+  facet_wrap(~area_code, scales = "free")
+)+(
+cc_m |> 
+  filter(yr %in% as.character(2017:2021)) |> 
+  ggplot(aes(cohort_m, catch_tot)) + 
+  geom_smooth(method = "lm", se=F) +
+  geom_text(aes(label = yr)) + 
+  facet_wrap(~area_code, scales = "free")
+) + plot_layout(ncol = 1)
+```
+
+This remains the case when comparing only marked catch to the marked cohort.
+
+```{r fig.height=7}
+cc_mm <- inner_join(
+  fs_ps_spt |> 
+    filter(type == "pst", area_code %in% c("05", "06"), var == "MSFQuota") |> 
+    group_by(type, area_code, yr) |> 
+    summarise(catch_m = sum(val), .groups = "drop")
+  ,
+  cohort_pre_ps |> 
+    filter(StockID %% 2 < 1) |> 
+    group_by(yr = RunYear) |> 
+    summarise(cohort_m = sum(cohort), .groups = "drop")
+  ,
+  by = "yr"
+)
+```
+
+```{r}
+(cc_mm |> 
+  ggplot(aes(cohort_m, catch_m)) + 
+  geom_smooth(method = "lm", se=F) +
+  geom_text(aes(label = yr)) + 
+  facet_wrap(~area_code, scales = "free")
+)+(
+cc_mm |> 
+  filter(yr != "2016") |> 
+  ggplot(aes(cohort_m, catch_m)) + 
+  geom_smooth(method = "lm", se=F) +
+  geom_text(aes(label = yr)) + 
+  facet_wrap(~area_code, scales = "free")
+)+(
+cc_mm |> 
+  filter(yr %in% as.character(2017:2021)) |> 
+  ggplot(aes(cohort_m, catch_m)) + 
+  geom_smooth(method = "lm", se=F) +
+  geom_text(aes(label = yr)) + 
+  facet_wrap(~area_code, scales = "free")
+) + plot_layout(ncol = 1)
+```
+
+# Marked September catch only
+
+Limiting to coho FRAM timestep 4, the month of September, yields an inverse relationship for A5 and a non-informative one for A6.
+
+```{r}
+cc_mm_4 <- inner_join(
+  fs_ps_spt |> 
+    filter(type == "pst", area_code %in% c("05", "06"), var == "MSFQuota", ts == 4) |> 
+    group_by(type, area_code, yr) |> 
+    summarise(catch_m_4 = sum(val), .groups = "drop")
+  ,
+  cohort_pre_ps |> 
+    filter(StockID %% 2 < 1) |> 
+    group_by(yr = RunYear) |> 
+    summarise(cohort_m = sum(cohort), .groups = "drop")
+  ,
+  by = "yr"
+)
+```
+
+```{r}
+(cc_mm_4 |> 
+  ggplot(aes(cohort_m, catch_m_4)) + 
+  geom_smooth(method = "lm", se=F) +
+  geom_text(aes(label = yr)) + 
+  facet_wrap(~area_code, scales = "free")
+)+(
+cc_mm_4 |> 
+  filter(yr %in% as.character(2017:2021)) |> 
+  ggplot(aes(cohort_m, catch_m_4)) + 
+  geom_smooth(method = "lm", se=F) +
+  geom_text(aes(label = yr)) + 
+  facet_wrap(~area_code, scales = "free")
+) + plot_layout(ncol = 1)
+```
+
+# Encounters ~ Runsize Regressions
+
+```{r, include==FALSE, echo=FALSE, eval=FALSE}
+#2021 regression
+d21 <- readxl::read_excel(
+  "T:/DFW-Salmon Mgmt Modeling Team - General/Preseason/Coho/2021/fishery_inputs/Areas_5-6_CohoInputs_jr2021 (1).xlsx",
+  range = "5-6Regressiondata2020_3_4_2020!A1:G20" 
+  )
+
+summary(lm(august_and_september ~ ADJ_PS_Runsize, data = d21))
+summary(lm(august_and_september ~ 0 + ADJ_PS_Runsize, data = d21))
+                   
+```
+
+```{r}
+d22 <- readxl::read_excel(
+  "T:/DFW-Salmon Mgmt Modeling Team - General/Preseason/Coho/2022/sport_hvst_est_misc/Areas_5-6_CohoInputs_2022.xlsx",
+  range = "5-6Regressiondata2020_3_4_2020!A1:G20" 
+  )
+
+d22 |> 
+  ggplot(aes(ADJ_PS_Runsize, august_and_september, label = Year, color = Year > 2015)) + 
+  geom_text() +
+  scale_x_continuous(limits = c(0,1.6e6))
+
+d22
+lm_all <- lm(august_and_september ~ 0 + ADJ_PS_Runsize, data = d22)
+summary(lm_all)
+coef(lm_all)
+
+summary(lm(august_and_september ~ 0 + ADJ_PS_Runsize, data = filter(d22, Year > 2010)))
+
+```
+

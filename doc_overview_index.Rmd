@@ -1,0 +1,78 @@
+---
+title: "Coho FRAM Puget Sound Sport Fishery Estimation"
+author: "dan.auerbach@dfw.wa.gov"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background
+
+During the annual North of Falcon process, fishery managers develop numeric predictions of salmon harvest in upcoming seasons. The [coho FRAM applications](https://framverse.github.io/fram_doc/apps_coho.html) sections of the FRAM (Fishery Regulation Assessment Model) [documentation](https://framverse.github.io/fram_doc/index.html) offer an overview of this work. For [WDFW marine sport fisheries](https://wdfw.wa.gov/fishing/basics/salmon/marine-areas) that target coho salmon (*O. kisutch*) in the Salish Sea, these inputs have been developed via two methods in recent years, as described briefly in the following sections.
+
+### Areas 5 & 6
+
+The [Area 5](https://wdfw.wa.gov/fishing/locations/marine-areas/sekiu-pillar-point) and [Area 6](https://wdfw.wa.gov/fishing/locations/marine-areas/east-juan-de-fuca-strait) catch areas are in the Strait of Juan de Fuca. Anglers in these areas might encounter stocks returning to various Puget Sound basins as well as to Canadian waters. Accordingly, input development methodology was based on the expectation of a highly mixed stock composition, combined with the assumptions that fishery encounters should be a function of total returning abundance, and that catches in spatiotemporally preceding "outside" ocean fisheries will alter that cohort. Implementation of these concepts involved several steps:
+
+-   A linear regression was fit to observed Area 5 encounters during August and September (i.e., kept and released coho as estimated from creel) as a function of observed post-season runsize, drawn from a Puget Sound run reconstruction (RRterm)
+-   The (slope) coefficient from this regression was used to predict Area 5 encounters from a preseason approximation(s) of the returning cohort taken from preseason coho TAMM files
+-   The predicted A5 encounters were apportioned by coho FRAM timestep (2:July, 3:August, 4:September) and extended to A6 via ratios based on multi-year averages of Catch Record Card (CRC) estimates
+-   These per-area per-timestep values were entered into coho FRAM as non-selective Quotas (i.e., flagged as 2 in the [FisheryScalers](https://framverse.github.io/fram_doc/user_main_menu_full.html#StockFishery_Scalers) table) and the model was run to generate [FisheryScaler values](https://framverse.github.io/fram_doc/calcs_glossary.html#Fishery_Scaler) reflecting how this encounter magnitude differed from the [base period](https://framverse.github.io/fram_doc/calcs_glossary.html#Base_Period)
+-   The resulting FRAM FisheryScaler values were re-flagged as mark selective and additional iterations were performed to generate scaler values that converged on the initial target encounters (i.e., via comparison to modeled encounters from the *Mortality* table)
+
+During a typical preseason, the steps after the first (regression fitting) were performed again as ocean fishery options changed.
+
+This approach had practical shortcomings (e.g., repeated transfer of values between various applications and formats), and the fundamental structure did not yield accurate representations of catch. The preseason utility of a post-season relationship between catch (or encounters etc.) and abundance (or cohort etc.) is contingent on the quality of the preseason approximation of that independent run size variable (thought to be informative post-hoc). An ["as applied" examination](a56_catch_cohort.html) showed that composite forecast accuracy has not been sufficient to meet this condition.
+
+### Areas 7-13
+
+Predicted catches for the remaining [interior marine areas](https://wdfw.wa.gov/fishing/locations/marine-areas) were calculated from averages of Catch Record Card [(CRC)](https://wdfw.wa.gov/licenses/fishing/catch-record-card) estimates and modeled as FRAM non-selective or mark-selective quotas. Note that such a FRAM landed catch `Quota` or `MSFQuota` refers specifically to a model parameter in the *FisheryScalers* table (operating to modify fishery magnitude relative to the base period). During the 2021 North of Falcon process, WDFW developed a weighted average modification that was intended to better reflect shifting patterns of effort and harvest in recent years. This modification was ultimately applied in only a few FRAM fishery-timesteps, after consultation among comanager technical staff.
+
+Inputs based on CRC estimates allowed comparison to a well-established, long-term dataset with various adjustments and corrections for bias adjustment and sub-sampling. However, these data were unavailable for the immediately preceding year (i.e., 2020 was the most recent year available when setting fisheries for 2022-23), hindering the quantitative application of the most recent information on fishery behavior. Furthermore, as expanded sampling and monitoring offer additional data during coho fisheries, the reported quantities will have the potential to diverge from modeled quantities based on CRC inputs in possibly confusing and uninformative ways.
+
+
+## Creel-based preseason harvest estimates
+
+Given this context, WDFW staff developed an alternative approach to calculating preseason sport fishery inputs to coho FRAM. This development was guided by several objectives, initially described during the NOF2022 comanager technical meeting.
+
+-   **Data driven**: Does the method apply as many recent observations as possible? Can it reduce or eliminate lags between collection, analysis and application to meet a "best available" standard?
+-   **Process-based**: Do the calculations follow our understanding of real-world activity, such that they are conceptually suited to inform management options with little or no precedent? Does it facilitate quantified scenario examination under acknowledged uncertainty (distributional and [deep](https://toolkit.climate.gov/content/decision-making-under-deep-uncertainty))?
+-   **Straightforward & transparent**: Can it be readily explained, with assumptions and limitations in plain view?
+
+In addition to these considerations, an over-arching objective was to develop a process that would readily accommodate ongoing refinements (e.g., additional datasets or related analyses), when such refinements serve the fundamental goal of greater accuracy in modeled representations of fisheries.
+
+### NOF2022
+
+An initial realization of a coho FRAM input calculation method for Puget Sound marine sport fisheries was presented to comanager technical staff during the March 1, 2022 annual model meeting. The principle governing equation defines an estimated harvest input as the product of days fished *df*, anglers per day *apd*, and harvest-per-angler-per-day *hapd* or: *harvest = df x apd x hapd*
+
+After explaining this concept and describing the associated data sources, a decision-support tool providing a convenient graphical interface was introduced (currently termed "sport harvest estimator") in this presentation. During the subsequent week, in response to feedback from technical staff, WDFW staff made a number of revisions and shared a public repository with the code and associated data. In addition, an [initial performance assessment](sport_hvst_estm_perf.html) was shared, based on uniform median *apd* and *hapd* settings.
+
+As described in the "About" pane to which the support tool loads, Puget Sound dockside [creel](https://wdfw.wa.gov/fishing/reports/creel) observations are used to inform the values for anglers per day *apd*, and harvest-per-angler-per-day *hapd*. Daily observations of numbers of anglers are expanded based on area-year-timestep specific sample rates, currently derived from RMIS "Catch and Sample" reports. Where review of the "total catch" values used to define sample rates indicated discrepancies with creel-based estimates of total catch, those total catch values were replaced and sample rates updated (25 of 858 records, 14 in Area 5). 
+
+In addition to a table of unexpanded and expanded angler counts, and a line interval plot of the per-year and pooled distributions of harvest-per-angler-per-day (for total and marked coho), the estimator tool also currently displays the time series of pre- and postseason FRAM values and the CRC records for the selected fishery and timestep. 
+
+Prior to "NOF1", WDFW staff met to establish coho fishery inputs for initial model runs. This process involved examination of "default" values for the 3 quantities (i.e., anticipated season dates and sample means and medians) relative to:
+
+-   the planned retention type and applicable prior year data,
+-   the NOF2021 input values (i.e., the most recent preseason), 
+-   the draft 2021 coho postseason estimates (shared with comanagers as *Draft_2021_Multiyear_Coho_Report_2.28.2022*),
+-   and expectations related to factors such as Chinook openings, ongoing spatial shifts in fishing effort, and a possible improvement in ocean conditions that could affect returning abundances. 
+
+After substantial deliberation, these initial values were submitted, largely based on arithmetic means of pooled years, attempting to use as many matched-regulation recent years as possible. An exception was the general avoidance of data from 2015 due to concerns about different fish behavior in this "crash" year. The initial values were shared with comanagers in an Excel workbook showing each underlying component value, the resulting calculated input, and a brief description of the selected years and type of summary measure (e.g., "arithmetic means for apd and hapd; years 2019-2021").
+
+The resulting NOF1 coho model runs were treated as tentative and unofficial, pending further comanager technical review. Over the following days, that additional review led to revisions of input values for some area-timesteps, largely as certain years were differently included or excluded. Area 12 was an exception, in which technical disagreement led to a policy compromise on inputs.
+
+### Future work
+
+Several extensions to the current interface are under consideration.
+
+The "slider" controls will likely be replaced with basic numeric entry fields, pre-filled with arithmetic mean values on (re)selection of area and timestep.
+
+The cohort values in pre- and postseason FRAM could be added to provide an additional point of reference when assessing the FRAM FisheryScalers values. This could assist managers in distinguishing whether and how over- and underpredictions of catches are related to under- and over-forecast abundances.
+
+Additional data from test fishing could inform the mark status and kept-released ratios bases on dockside creel interviews, perhap in conjunction with boat surveys or other monitoring information.
+
+Finally, more years of greater sampling intensity during coho-only fisheries will enable refinement of the sample rate expansions and/or options to use full-area estimates of angler numbers.
