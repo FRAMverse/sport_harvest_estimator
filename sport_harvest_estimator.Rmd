@@ -116,7 +116,7 @@ DBI::dbDisconnect(db_con); rm(db_con)
 
 #AHB updated from same estimate db, adding NS back to 2003
 coho_regulations <- readxl::read_excel(
-  path = "T:/DFW-Salmon Mgmt Modeling Team - General/Preseason/Coho/2022/coho_regulations.xlsx",
+  path = "T:/DFW-Salmon Mgmt Modeling Team - General/Preseason/Coho/2022/sport_hvst_est_misc/coho_regulations.xlsx",
   sheet = "coho_regulations") |>
   select(catch_area_code, regulation_type_code, start_datetime, end_datetime) |>
   mutate(
