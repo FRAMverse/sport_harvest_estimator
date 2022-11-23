@@ -38,18 +38,10 @@ pal_ts <- set_names(
    paste(1:5, c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":")
 )
 
-levels = list(
-  dow = c("Thu","Wed","Tue","Mon","Sun","Sat","Fri")
-)
-
-lu <- tibble(
-  pssp_areas = c("05","06","07","09","10","11","12","13","81","82"),
-  fram_ps_spt = c(91:93, 107, 118, 129, 152, 136, 106, 115)
-)
 
 out <- reactiveValues(
   est = expand_grid(
-    area_code = lu$pssp_areas,
+    area_code = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"),
     timestep = as.character(1:5),
     est = 0, 
     wday_df = 0, wend_df = 0,
@@ -58,160 +50,30 @@ out <- reactiveValues(
     rationale = ""
   )
 )
-
-load("sport_harvest_estimator.RData")
-
-year_min <- 2009
-
-pssp <- filter(pssp, year >= year_min)
-rmis_cs <- filter(rmis_cs, year >= year_min)
 ```
 
-```{r pssp_data_prep, eval=FALSE}
-# #standalone sqlite database from TG supporting estimate report
-# #contains enhanced version of pssp_dev mvw_dockside_salmon
-# #for coho only but with 2016
-# #also has regs datasets with MSF back to 2003; NS currently only back to 2015, but AHB updated externally
 
-db_con <- DBI::dbConnect(RSQLite::SQLite(), 'O:/new_post_season/coho.db')
 
-coho_dockside <- tbl(db_con, "coho_dockside") |>
-  filter(
-    catch_area_code %in% c("05","06","07","81","82","09","10","11","12","13")
-  ) |>
-  group_by(area_code = catch_area_code, survey_datetime) |>
-  summarise(across(c(anglers, starts_with("coho_")), ~sum(., na.rm=T)), .groups = "drop") |>
-  collect() |>
-  mutate(
-    across(anglers:coho_unk_r, ~as.integer(replace_na(.,0))),
-    survey_datetime = as.Date(survey_datetime),
-    year = lubridate::year(survey_datetime),
-    yr = factor(year),
-    month = lubridate::month(survey_datetime),
-    m = factor(month.abb[month], levels = month.abb),
-    day = lubridate::day(survey_datetime),
-    dow = lubridate::wday(survey_datetime, label = T) |> factor(levels = levels$dow),
-    wkend = if_else(dow %in% c("Fri", "Sat", "Sun"), "wkend", "wkday"),
-    ts = case_when(
-      m %in% month.abb[1:6] ~ 1,
-      m == "Jul" ~ 2,
-      m == "Aug" ~ 3,
-      m == "Sep" ~ 4,
-      m %in% month.abb[10:12] ~ 5),
-    coho_K = coho_ad_k + coho_um_k + coho_unk_k,
-    k_ad_rate = coho_ad_k/(coho_ad_k + coho_um_k), #observation specific mark rate of kept
-    k_ad_rate = if_else(is.nan(k_ad_rate), 0, k_ad_rate),
-    coho_K_ad = coho_ad_k + (coho_unk_k * k_ad_rate),
-    coho_R = coho_ad_r + coho_um_r + coho_unk_r,
-    coho_E = coho_K + coho_R,
-    coho_kpa = coho_K / anglers,
-    coho_kpa_ad = coho_K_ad / anglers,
-    coho_rpa = coho_R / anglers,
-    coho_epa = coho_E / anglers
-    ) |>
-  select(area_code, survey_datetime, year:ts,
-         anglers, coho_K:coho_epa)
+```{r pull_data}
+# connect to database
+con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
+# pull necessary tables and view
 
-DBI::dbDisconnect(db_con); rm(db_con)
+# puget sound creel information merged to regulation
+pssp <- DBI::dbReadTable(con, 'vw_coho_dockside_regulation')
 
-#AHB updated from same estimate db, adding NS back to 2003
-coho_regulations <- readxl::read_excel(
-  path = "T:/DFW-Salmon Mgmt Modeling Team - General/Preseason/Coho/2022/coho_regulations.xlsx",
-  sheet = "coho_regulations") |>
-  select(catch_area_code, regulation_type_code, start_datetime, end_datetime) |>
-  mutate(
-    catch_area_code = str_pad(catch_area_code, width = 2, pad = "0"),
-    across(contains("datetime"), as.Date)
-    )
+# sample rates from RMIS catch sample tables
+rmis_cs <- DBI::dbReadTable(con, 'coho_sample_rate')
 
-pssp <- coho_regulations |>
-  rowwise() |>
-  mutate(
-    dockside = list(
-      coho_dockside |>
-        filter(
-          area_code == catch_area_code,
-          between(survey_datetime, start_datetime, end_datetime)
-        )
-    )
-  ) |>
-  unnest(dockside) |>
-  select(-catch_area_code, -start_datetime, -end_datetime)
+# compilation of FRAM parameters from post-season and pre-season databases
+fs_ps_spt <- DBI::dbReadTable(con, 'coho_fram')
 
-```
+# CRC estimates
+crc <- DBI::dbReadTable(con, 'coho_crc')
 
-```{r rmis_data_prep, eval=FALSE}
-#Sample rates based on RMIS catch-sample query by AHB
-#substituting creel-based total caught from TG where possible, after 2015, mostly A5
+# disconnect from
+DBI::dbDisconnect(con)
 
-# rmis_cs <- readxl::read_excel("T:/DFW-Salmon Mgmt Modeling Team - General/Preseason/Coho/2022/SportSampleRateCoho2000_2020.xlsx", sheet = "Summary") |> 
-#   mutate(
-#     area_code = str_pad(str_squish(str_remove_all(catch_location_name, "MARINE SPORT AREA |MARINE SPORT PCA|\\.")), width = 2, pad = "0"),
-#     yr = factor(catch_year)
-#   ) |> #count(area_code)
-#   select(FisheryID = `Fish ID`, area_code, year= catch_year, yr, ts = TS, caught = `Sum of number_caught`, sampled = `Sum of number_sampled`, sr = Rate) |> 
-#   filter(
-#     !is.na(area_code),
-#     caught > 10, sampled > 10
-#     )
-
-rmis_cs <- readxl::read_excel("T:/DFW-Salmon Mgmt Modeling Team - General/Preseason/Coho/2022/SportSampleRateCoho2000_2020_creel_subs.xlsx", sheet = "creel_est_subs") |> 
-  mutate(
-    area_code = str_pad(str_squish(str_remove_all(catch_location_name, "MARINE SPORT AREA |MARINE SPORT PCA|\\.")), width = 2, pad = "0"),
-    yr = factor(year),
-    sr = if_else(is.na(sr_creel_sub), sr, sr_creel_sub)
-  ) |> 
-  select(FisheryID, area_code, year, yr, ts, caught, sampled, sr) |> 
-  filter(
-    !is.na(area_code),
-    caught > 10, sampled > 10
-    )
-
-```
-
-```{r fram_data_prep, eval=FALSE}
-mdb_pre <- "O:/code/coho/fram_mdbs/US_PFMC_NOF_FinalCohoFRAM_MultiYr.mdb"
-mdb_pst <- "O:/code/coho/fram_mdbs/PSC_CoTC_PostSeason_CohoFRAMDB_thru2020_021622.mdb"
-
-fs_ps_spt <- bind_rows(
-  framr::read_coho_fish_sclr(mdb_pre, fisheries = lu$fram_ps_spt) |> mutate(type = "pre"),
-  framr::read_coho_fish_sclr(mdb_pst, fisheries = lu$fram_ps_spt) |> mutate(type = "pst")
-  ) |>
-  filter(RunYear >= 2009, FisheryFlag != 0) |> #count(type)
-  select(type, yr = RunYear, FisheryName, ts = TimeStep, ff = FisheryFlag, Quota, MSFQuota) |>
-  mutate(
-    area_code = str_remove_all(FisheryName, "Area|Spt|Ar|-") |> str_trim() |> str_pad(width = 2, pad = "0"),
-    yr = factor(yr)
-  ) |>
-  unite("yr_type", yr, type, remove = FALSE) |>
-  pivot_longer(names_to = "var", values_to = "val", Quota:MSFQuota) |>
-  filter(
-    !(ff %in% 1:2 & var=="MSFQuota"),
-    !(ff %in% 7:8 & var=="Quota")
-    )
-
-```
-
-```{r crc_data_prep, eval=FALSE}
-crc <- readRDS("T:/DFW-Salmon Mgmt Modeling Team - General/Catch datasets/CRC/d_spt_hvst_est_20220302.rds") |>
-  filter(
-    species == "Coho", between(catchyear, 2009, 2022),
-    areacode %in% c("5","6","7","81","82","9","10","11","12","13")
-    ) |>
-  mutate(area_code = str_pad(areacode, width = 2, pad = "0")) |>
-  select(area_code, catchyear, catchstatmonth, catchperiodstartdate, catchperiodenddate, catchest) |>
-  group_by(area_code, catchyear, catchstatmonth) |> 
-  summarise(catchest = sum(catchest), .groups = "drop") |> 
-  mutate(
-    m = factor(month.abb[catchstatmonth], levels = month.abb),
-    yr = factor(catchyear),
-    ts = case_when(
-      m %in% month.abb[1:6] ~ 1,
-      m == "Jul" ~ 2,
-      m == "Aug" ~ 3,
-      m == "Sep" ~ 4,
-      m %in% month.abb[10:12] ~ 5)
-    )
 ```
 
 About
@@ -245,7 +107,7 @@ Area-Timestep-Estimates {data-height=200}
 
 ```{r buttons}
 radioButtons("focal_area", label = "Focal Area",
-             choices = lu$pssp_areas, selected = lu$pssp_areas[1], inline = T, width = '100%')
+             choices = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"), selected = "05", inline = T, width = '100%')
 
 radioButtons("focal_ts", label = "Focal Timestep",
              choiceValues = 1:5, 
@@ -380,7 +242,7 @@ checkboxGroupInput("years", "Focal years", inline = T, width = '100%',
 
 ```{r filtered_objects}
 pssp_at <- reactive({
-  filter(pssp, area_code == input$focal_area, ts == input$focal_ts, yr %in% input$years)
+  filter(pssp, area_code == input$focal_area, time_step == input$focal_ts, yr %in% input$years)
 })
 
 rmis_cs_at <- reactive({
@@ -400,14 +262,14 @@ fram_at <- reactive({
 Data {.tabset data-height=800}
 --------------------------------------------
 
-### PSSP effort obs (data from *mvw_dockside_salmon*, refreshed Feb 23, 2022)
+### PSSP effort obs (data from *mvw_dockside_salmon*, refreshed Nov 22, 2022)
 
 ```{r gt_anglers}
 gt::render_gt({
-  sr_med <- if_else(nrow(rmis_cs_at()) > 0, median(rmis_cs_at()$sr), NA_real_)
+  sample_rate_median <- if_else(nrow(rmis_cs_at()) > 0, median(rmis_cs_at()$sample_rate), NA_real_)
   
   pssp_at_gt <- pssp_at() |> 
-    group_by(area_code, yr, wkend) |>
+    group_by(area_code, yr, week_day_type) |>
     summarise(
       n_obs = n(),
       across(
@@ -418,17 +280,18 @@ gt::render_gt({
           q95 = ~round(quantile(., 0.95, na.rm=T), 0)
         ),
         .names = "{.fn}"), .groups = "drop") |>
-    pivot_wider(names_from = wkend, values_from = c(n_obs, q50, mu, q95)) |> 
+    pivot_wider(names_from = week_day_type, values_from = c(n_obs, q50, mu, q95)) |> 
     arrange(desc(yr)) |>
     left_join(
-      rmis_cs_at() |> select(area_code, yr, sr),
+      rmis_cs_at() |> select(area_code, yr, sample_rate),
       by = c("area_code", "yr")
     ) |> 
     mutate(
-      sr = if_else(is.na(sr), sr_med, sr),
+      # this effectively imputes the sample rate
+      sample_rate = if_else(is.na(sample_rate), sample_rate_median, sample_rate),
       across(
         q50_wkday:q95_wkend,
-        list(expnd = ~round(replace_na(.,0) / sr, 0))
+        list(expnd = ~round(replace_na(.,0) / sample_rate, 0))
       )
     ) |> 
     select(area_code, yr, contains("wkday"), contains("wkend"))
@@ -476,14 +339,16 @@ gt::render_gt({
   })
 ```
 
-### PSSP kept obs (data from *mvw_dockside_salmon*, refreshed Feb 23, 2022)
+### PSSP kept obs (data from *mvw_dockside_salmon*, refreshed Nov 22, 2022)
 
 ```{r gg_kpa}
 renderPlot({
   pssp_at_q <- bind_rows(
     pssp_at() |>  
-      pivot_longer(names_to = "kpa_type", values_to = "kpa", cols = c(coho_kpa, coho_kpa_ad)) |> 
-      group_by(area_code, yr, wkend, kpa_type) |>
+      pivot_longer(names_to = "kpa_type",
+                   values_to = "kpa", 
+                   cols = c(coho_kept_per_angler, coho_kept_ad_per_angler)) |> 
+      group_by(area_code, yr, week_day_type, kpa_type) |>
       summarise(
         n_obs = n(),
         across(kpa,
@@ -499,8 +364,10 @@ renderPlot({
       arrange(desc(yr))
     ,
     pssp_at() |>  
-      pivot_longer(names_to = "kpa_type", values_to = "kpa", cols = c(coho_kpa, coho_kpa_ad)) |> 
-      group_by(area_code, wkend, kpa_type) |>
+      pivot_longer(names_to = "kpa_type",
+                   values_to = "kpa", 
+                   cols = c(coho_kept_per_angler, coho_kept_ad_per_angler))|> 
+      group_by(area_code, week_day_type, kpa_type) |>
       summarise(
         yr = "pooled",
         n_obs = n(),
@@ -529,14 +396,14 @@ renderPlot({
     geom_text(aes(x = yr, y = q95, label = q95), position = position_dodge(width = 1.1)) +
     geom_hline(
       data = tibble(
-        wkend = c("wkday", "wkend"), 
+        week_day_type = c("wkday", "wkend"), 
         yint = c(input$wday_hapd, input$wend_hapd)
         ),
       aes(yintercept = yint), size = 1.7, color = pal_wkend) +
-    facet_wrap(~wkend, scales = "free_x") +
+    facet_wrap(~week_day_type, scales = "free_x") +
     scale_x_discrete("") +
     scale_y_continuous("Coho kept per angler per day") +
-    scale_color_manual(values = c("coho_kpa" = "#D2A554", "coho_kpa_ad" = "#A4BADF")) +
+    scale_color_manual(values = c("coho_kept_per_angler" = "#D2A554", "coho_kept_ad_per_angler" = "#A4BADF")) +
     labs(
       subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
       ) +
@@ -545,6 +412,10 @@ renderPlot({
       legend.position = "bottom"
       )
 })
+
+
+
+
 
 ```
 
