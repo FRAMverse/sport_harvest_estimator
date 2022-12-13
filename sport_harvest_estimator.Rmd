@@ -55,28 +55,28 @@ out <- reactiveValues(
 
 ```{r pull_data}
 # # connect to database
-# con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
-# # pull necessary tables and view
-# 
-# # puget sound creel information merged to regulation
-# pssp <- DBI::dbReadTable(con, 'vw_coho_dockside_regulation')
-# 
-# # sample rates from RMIS catch sample tables
-# rmis_cs <- DBI::dbReadTable(con, 'coho_sample_rate')
-# 
-# # compilation of FRAM parameters from post-season and pre-season databases
-# fs_ps_spt <- DBI::dbReadTable(con, 'coho_fram')
-# 
-# # CRC estimates
-# crc <- DBI::dbReadTable(con, 'coho_crc')
-# 
-# # intensive monitoring / substituted with crc (hopefully)
-# coho_ests <- DBI::dbReadTable(con, 'coho_estimates')
-# 
-# # disconnect from database
-# DBI::dbDisconnect(con)
+con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
+# pull necessary tables and view
 
-load(file = "sport_harvest_estimator.RData")
+# puget sound creel information merged to regulation
+pssp <- DBI::dbReadTable(con, 'vw_coho_dockside_regulation')
+
+# sample rates from RMIS catch sample tables
+rmis_cs <- DBI::dbReadTable(con, 'coho_sample_rate')
+
+# compilation of FRAM parameters from post-season and pre-season databases
+fs_ps_spt <- DBI::dbReadTable(con, 'coho_fram')
+
+# CRC estimates
+crc <- DBI::dbReadTable(con, 'coho_crc')
+
+# intensive monitoring / substituted with crc (hopefully)
+coho_ests <- DBI::dbReadTable(con, 'coho_estimates')
+
+# disconnect from database
+DBI::dbDisconnect(con)
+
+#load(file = "sport_harvest_estimator.RData")
 
 ```
 
