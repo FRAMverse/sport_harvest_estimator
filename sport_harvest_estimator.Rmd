@@ -8,8 +8,8 @@ output:
     theme:
       version: 4
       bootswatch: default
-      bg: "#D0D0D0"
-      fg: "#000000"
+      #bg: "#D0D0D0"
+      #fg: "#000000"
       navbar-bg: "#377F48"
       primary: "#377F48"
 runtime: shiny
@@ -54,24 +54,29 @@ out <- reactiveValues(
 
 
 ```{r pull_data}
-# connect to database
-con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
-# pull necessary tables and view
+# # connect to database
+# con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
+# # pull necessary tables and view
+# 
+# # puget sound creel information merged to regulation
+# pssp <- DBI::dbReadTable(con, 'vw_coho_dockside_regulation')
+# 
+# # sample rates from RMIS catch sample tables
+# rmis_cs <- DBI::dbReadTable(con, 'coho_sample_rate')
+# 
+# # compilation of FRAM parameters from post-season and pre-season databases
+# fs_ps_spt <- DBI::dbReadTable(con, 'coho_fram')
+# 
+# # CRC estimates
+# crc <- DBI::dbReadTable(con, 'coho_crc')
+# 
+# # intensive monitoring / substituted with crc (hopefully)
+# coho_ests <- DBI::dbReadTable(con, 'coho_estimates')
+# 
+# # disconnect from database
+# DBI::dbDisconnect(con)
 
-# puget sound creel information merged to regulation
-pssp <- DBI::dbReadTable(con, 'vw_coho_dockside_regulation')
-
-# sample rates from RMIS catch sample tables
-rmis_cs <- DBI::dbReadTable(con, 'coho_sample_rate')
-
-# compilation of FRAM parameters from post-season and pre-season databases
-fs_ps_spt <- DBI::dbReadTable(con, 'coho_fram')
-
-# CRC estimates
-crc <- DBI::dbReadTable(con, 'coho_crc')
-
-# disconnect from
-DBI::dbDisconnect(con)
+load(file = "sport_harvest_estimator.RData")
 
 ```
 
@@ -185,14 +190,14 @@ Controls {data-height=350}
 ### Weekday assumptions
 
 ```{r wkday_sliders}
-sliderInput("wday_df", label = "Weekday Days fished",
-            min = 0, max = 365, value = 20, step = 1, round = T, width = '100%')
+numericInput("wday_df", label = "Weekday Days fished",
+            min = 0, max = 365, value = 20, step = 1, width = '100%')
 
-sliderInput("wday_apd", label = "Weekday Anglers per day",
-            min = 0, max = 2000, value = 0, step = 5, round = T, width = '100%')
+numericInput("wday_apd", label = "Weekday Anglers per day",
+            min = 0, max = 2000, value = 0, step = 5, width = '100%')
 
-sliderInput("wday_hapd", label = "Weekday Harvest per angler per day",
-            min = 0, max = 4, value = 0, step = 0.01, round = F, width = '100%')
+numericInput("wday_hapd", label = "Weekday Harvest per angler per day",
+            min = 0, max = 4, value = 0, step = 0.01, width = '100%')
 
 wday_harvest <- reactive({
   input$wday_df * input$wday_apd * input$wday_hapd
@@ -207,14 +212,14 @@ wday_anglers <- reactive({
 ### Weekend assumptions
 
 ```{r wkend_sliders}
-sliderInput("wend_df", label = "Weekend Days fished",
-            min = 0, max = 365, value = 10, step = 1, round = T, width = '100%')
+numericInput("wend_df", label = "Weekend Days fished",
+            min = 0, max = 365, value = 10, step = 1, width = '100%')
 
-sliderInput("wend_apd", label = "Weekend Anglers per day",
-            min = 0, max = 2000, value = 0, step = 5, round = T, width = '100%')
+numericInput("wend_apd", label = "Weekend Anglers per day",
+            min = 0, max = 2000, value = 0, step = 5,  width = '100%')
 
-sliderInput("wend_hapd", label = "Weekend Harvest per angler per day",
-            min = 0, max = 4, value = 0, step = 0.01, round = F, width = '100%')
+numericInput("wend_hapd", label = "Weekend Harvest per angler per day",
+            min = 0, max = 4, value = 0, step = 0.01,  width = '100%')
 
 wend_harvest <- reactive({
   input$wend_df * input$wend_apd * input$wend_hapd
@@ -240,6 +245,13 @@ checkboxGroupInput("years", "Focal years", inline = T, width = '100%',
 ```
 
 ```{r filtered_objects}
+# these block of code will make dataframes reactive objects.
+# i.e. when the variable pssp_at() is called farther down
+# this code it's referencing the reactive object below,
+# as the user changes the inputs of area, timestep, and years
+# the pssp_at() object executes the code below, dynamically filtering the
+# pssp dataframe to the users input represented by pssp_at() 
+
 pssp_at <- reactive({
   filter(pssp, area_code == input$focal_area, time_step == input$focal_ts, yr %in% input$years)
 })
@@ -256,6 +268,11 @@ fram_at <- reactive({
   filter(fs_ps_spt, area_code == input$focal_area, ts == input$focal_ts)
 }) 
 
+ests_at <- reactive({
+  filter(coho_ests, area_code == input$focal_area, time_step == input$focal_ts)
+})
+
+
 ```
 
 Data {.tabset data-height=800}
@@ -266,7 +283,6 @@ Data {.tabset data-height=800}
 ```{r gt_anglers}
 gt::render_gt({
   sample_rate_median <- if_else(nrow(rmis_cs_at()) > 0, median(rmis_cs_at()$sample_rate), NA_real_)
-  
   pssp_at_gt <- pssp_at() |> 
     group_by(area_code, yr, week_day_type) |>
     summarise(
@@ -383,14 +399,14 @@ renderPlot({
   )
   
   pssp_at_q |> 
-    ggplot(aes(x = yr, y = q50, color = kpa_type, group = kpa_type)) +
+    ggplot(aes(x = yr, y = mu, color = kpa_type, group = kpa_type)) +
     coord_flip() +
     geom_linerange(aes(ymin = q05, ymax = q95), position = position_dodge(width = 0.4)) +
     geom_pointrange(aes(ymin = q25, ymax = q75), size = 1.1, position = position_dodge(width = 0.4)) +
     geom_point(aes(x = yr, y = mu), shape = 4, size = 6, position = position_dodge(width = 0.4)) +
     geom_text(aes(x = yr, y = 0, label = n_obs), nudge_y = -0.05) +
     geom_text(aes(x = yr, y = q05, label = q05), position = position_dodge(width = 1.1)) +
-    geom_text(aes(x = yr, y = q50, label = q50), position = position_dodge(width = 1.3)) +
+    #geom_text(aes(x = yr, y = q50, label = q50), position = position_dodge(width = 1.3)) +
     geom_text(aes(x = yr, y = mu, label = mu), position = position_dodge(width = 1.5)) +
     geom_text(aes(x = yr, y = q95, label = q95), position = position_dodge(width = 1.1)) +
     geom_hline(
@@ -422,20 +438,72 @@ renderPlot({
 
 ```{r gg_fram}
 renderPlot({
-  fram_at() |> 
-    ggplot(aes(yr_type, val, fill = var)) + 
-    geom_col(position = position_stack(), alpha = 0.7) + 
-    geom_col(data = filter(fram_at(), type == "pst"), position = position_stack(), alpha = 1) + 
+  
+  # fs_ps_spt_test <- fs_ps_spt |>
+  #   filter(area_code == '12', ts == 4, yr >= 2009)
+  # 
+  # coho_ests_test <- coho_ests |>
+  #   filter(area_code == '12', time_step == 4, year >= 2009)
+
+
+  fram_ests <- ests_at() |>
+    rowwise() |>
+    mutate(
+      # apportion unk mark-status to ad/um for retention
+      coho_ad_k = coho_ad_k + (coho_unk_k * (coho_ad_k / sum(coho_ad_k,coho_um_k, na.rm=T))),
+      coho_ad_k = replace_na(coho_ad_k, 0),
+      coho_um_k = coho_um_k + (coho_unk_k * (coho_um_k / sum(coho_ad_k,coho_um_k, na.rm=T))),
+      coho_um_k = replace_na(coho_um_k, 0),
+      total_retained_coho = sum(coho_ad_k, coho_um_k)
+    ) |>
+    group_by(year, time_step, area_code, source) |>
+    summarize(across(c(coho_ad_k, coho_um_k, total_retained_coho), sum, na.rm=T), .groups = 'drop') |>
+    mutate(
+      yr_type = paste0(year, '_pst_ests'),
+      yr = as.character(year),
+      ts = time_step,
+      type = 'ests'
+      ) |>
+    select(yr_type, yr, ts, type, area_code, var = source, val = total_retained_coho)     |>
+    bind_rows(fram_at())
+
+
+  fram_ests |> ggplot(aes(yr_type, val, fill = var)) +
+    geom_col(position = position_stack(), alpha = 0.7) +
+      geom_col(data = filter(fram_ests, type == "ests"), position = position_stack(), alpha = .6) +
+    geom_col(data = filter(fram_ests, type == "pst"), position = position_stack(), alpha = 1) +
     geom_hline(yintercept = wday_harvest() + wend_harvest()) +
     scale_y_continuous("FRAM inputs", sec.axis = dup_axis(), labels = scales::comma) +
-    scale_fill_manual(values = c("Quota" = "#D2A554", "MSFQuota" = "#A4BADF")) +
+    scale_fill_manual(values = c(
+      "Quota" = "#D2A554",
+      "MSFQuota" = "#A4BADF",
+      "CRC" = "#04a43c",
+      "CREEL" = "#014218"
+      )) +
     labs(
       subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
     ) +
     theme(
-      text = element_text(size = 20)
+      text = element_text(size = 20),
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
       )
+#--------------------------------------------------------------  
+#   fram_at() |> 
+#     ggplot(aes(yr_type, val, fill = var)) + 
+#     geom_col(position = position_stack(), alpha = 0.7) + 
+#     geom_col(data = filter(fram_at(), type == "pst"), position = position_stack(), alpha = 1) + 
+#     geom_hline(yintercept = wday_harvest() + wend_harvest()) +
+#     scale_y_continuous("FRAM inputs", sec.axis = dup_axis(), labels = scales::comma) +
+#     scale_fill_manual(values = c("Quota" = "#D2A554", "MSFQuota" = "#A4BADF")) +
+#     labs(
+#       subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
+#     ) +
+#     theme(
+#       text = element_text(size = 20),
+#       axis.text.x=element_text(angle=90,hjust=1)
+#       )
 })
+
 
 ```
 
@@ -465,4 +533,3 @@ renderPlot({
 DT::renderDT({out$est})
 
 ```
-
