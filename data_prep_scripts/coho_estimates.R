@@ -19,7 +19,7 @@ daily_ests <- ests %>%
   mutate(
     survey_datetime = list(seq(start_date, end_date, by = '1 day')), # sequence of days within stratum
     day_delta = length(survey_datetime), # number of days within stratum
-    across(boats:coho_unk_r, ~.x / day_delta) # divide estimates by number of days
+    across(coho_ad_k:coho_unk_r, ~.x / day_delta) # divide estimates by number of days
   ) %>%
   unnest_longer(survey_datetime) %>% # explode stratum
   mutate(
@@ -57,7 +57,8 @@ daily_ests <- ests %>%
 # pull in daily crc files, filter wrangle the data for joining
 crc <- readxl::read_excel(
   path = here::here('data/sources/crc_daily_estimates.xlsx'),
-  sheet = "Marine Daily") %>%
+  sheet = "Sheet1",
+  col_types = c('text', 'numeric', 'text', 'text', 'text','text', 'date', 'numeric')) %>%
   janitor::clean_names() %>% # no dumb names
   filter(
     !area %in% c('2-1', '2-2'), # no willipa bay
@@ -97,7 +98,7 @@ crc_days <- regs_long %>%
     by = c('catch_area_code' = 'area_code', 'days' = 'survey_datetime')
   ) %>%
   filter(
-    days >= '2021-01-01' # intensive monitoring goes back 1/1/2021 currently
+    days >= '2015-06-01' # intensive monitoring goes back 1/1/2021 currently
   )
 
 # QAQC
@@ -139,7 +140,7 @@ ests_regs <- regs_long %>%
                     'days' = 'survey_datetime') # effectively a filter
              ) %>%
   mutate(source = 'CREEL') %>%
-  select(regulation_type_code, survey_datetime = days, area_code = catch_area_code, year, boats:coho_unk_r, source)
+  select(regulation_type_code, survey_datetime = days, area_code = catch_area_code, year, coho_ad_k:coho_unk_r, source)
   
 
 ests_comp <- ests_regs %>%
