@@ -36,7 +36,7 @@ write.csv(coho_sample_rate, here::here('aux_scripts/database_to_csv/coho_sample_
 
 # a view of dockside data by regulation
 reg_dockside <- coho_sample_rate <- DBI::dbReadTable(con, 'vw_coho_dockside_regulation')
-write.csv(update_log, here::here('aux_scripts/database_to_csv/reg_dockside.csv'))
+write.csv(reg_dockside, here::here('aux_scripts/database_to_csv/reg_dockside.csv'))
 
 # log of updates to the database (whenever compile_to_database.R is run)
 update_log <- coho_sample_rate <- DBI::dbReadTable(con, 'update_log')
