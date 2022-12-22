@@ -45,8 +45,7 @@ out <- reactiveValues(
     timestep = as.character(1:5),
     est = 0, 
     wday_df = 0, wend_df = 0,
-    wday_apd = 0, wend_apd = 0,
-    wday_hapd = 0, wend_hapd = 0,
+    wday_hpd = 0, wend_hpd = 0,
     rationale = ""
   )
 )
@@ -54,30 +53,64 @@ out <- reactiveValues(
 
 
 ```{r pull_data}
-# # connect to database
+# connect to database
 con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
 # pull necessary tables and view
 
 # puget sound creel information merged to regulation
-pssp <- DBI::dbReadTable(con, 'vw_coho_dockside_regulation')
+pssp <- DBI::dbReadTable(con, 'vw_estimates_by_regulation')
 
-# sample rates from RMIS catch sample tables
-rmis_cs <- DBI::dbReadTable(con, 'coho_sample_rate')
+
+# puget sound creel information merged to regulation
+regs <- DBI::dbReadTable(con, 'coho_regulations')
+
 
 # compilation of FRAM parameters from post-season and pre-season databases
 fs_ps_spt <- DBI::dbReadTable(con, 'coho_fram')
 
-# CRC estimates
-crc <- DBI::dbReadTable(con, 'coho_crc')
-
-# intensive monitoring / substituted with crc (hopefully)
-coho_ests <- DBI::dbReadTable(con, 'coho_estimates')
-
 # disconnect from database
 DBI::dbDisconnect(con)
 
-#load(file = "sport_harvest_estimator.RData")
 
+
+# regulations need to be split out with weekday and weekday days counted
+# for default inputs for days in upcomming fisheries fisheries
+
+daily_regs <- regs %>%
+  rowwise() %>%
+  mutate(
+    date = list(seq(as.Date(start_datetime), as.Date(end_datetime), by = '1 day'))
+  ) %>%
+  unnest_longer(date) %>%
+  select(-start_datetime, -end_datetime) %>% # now a dataframe of daily dates by reg/area
+  mutate(
+    day_type = if_else(lubridate::wday(date) %in% c(1,6,7), 'WE', 'WD'), # weekday / weekend
+    time_step = case_when(
+      lubridate::month(date) %in% c(1,2,3,4,5,6) ~ 1L,
+      lubridate::month(date)  == 7 ~ 2L,
+      lubridate::month(date)  == 8 ~ 3L,
+      lubridate::month(date)  == 9 ~ 4L,
+      lubridate::month(date) %in% c(10, 11, 12) ~ 5L
+      ),
+    year = lubridate::year(date)
+  )
+
+# ugh, realized dates!!!!!!!!!!!!!!!!!!!!!!!!!!!! need planned/pamphlet!!!
+regs_day_type_count <- daily_regs %>%
+  count(catch_area_code, regulation_type_code, time_step, day_type, year) %>%
+  pivot_wider(names_from = 'day_type', values_from = n)
+
+
+# this is selecting the most recent number of WD/WE days 
+# by area/timestep - defaults of the user interface
+
+recent_regs <- regs_day_type_count %>%
+  group_by(catch_area_code, time_step) %>%
+  slice_max(order_by = year, n = 1) %>%
+  ungroup()
+
+
+#load(file = "sport_harvest_estimator.RData")
 ```
 
 About
@@ -104,7 +137,7 @@ After reaching an acceptable input, the user enters a brief description of the r
 Coho kept
 ============================================
 
-Area-Timestep-Estimates {data-height=200}
+Area-Timestep-Estimates {data-height=250}
 --------------------------------------------
 
 ### Area & Timestep
@@ -118,27 +151,33 @@ radioButtons("focal_ts", label = "Focal Timestep",
              choiceNames = paste(1:5, c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":"), 
              selected = 4, inline = T, width = '100%')
 
+radioButtons("msf", label = "Mark Selective",
+             choiceValues = c('NS', 'MSF'), 
+             choiceNames = c('No', 'Yes'), 
+             selected = 'MSF', inline = T, width = '100%')
+
+
+
 ```
 
-### Anglers and harvest estimated
+### Harvest estimates
 
 ```{r valuebox}
 renderValueBox({
   valueBox(
-    value = paste0("Weekday: ", round(wday_anglers()), " anglers, ", round(wday_harvest()), " harvest"),
+    value = paste0("Weekday: ", round(wday_harvest()), " harvest"),
     icon = "fa-fish")
   })
 
 renderValueBox({
   valueBox(
-    value = paste0("Weekend: ", round(wend_anglers()), " anglers, ", round(wend_harvest()), " harvest"),
+    value = paste0("Weekend: ", round(wend_harvest()), " harvest"),
     icon = "fa-fish")
   })
 
 renderValueBox({
   valueBox(
     value = paste0("Total: ",
-                   round(wday_anglers()+wend_anglers()), " anglers, ",
                    round(wday_harvest()+wend_harvest()), " harvest"),
     icon = "fa-fish")
   })
@@ -163,8 +202,7 @@ reactive({
     timestep = input$focal_ts,
     est = wday_harvest()+wend_harvest(),
     wday_df = input$wday_df, wend_df = input$wend_df,
-    wday_apd = input$wday_apd, wend_apd = input$wend_apd,
-    wday_hapd = input$wday_hapd, wend_hapd = input$wend_hapd,
+    wday_hapd = input$wday_hpd, wend_hpd = input$wend_hpd,
     rationale = input$rationale
     )
 
@@ -183,28 +221,215 @@ downloadHandler(
 
 ```
 
+```{r estimates prep}
+# this chunk probably needs to be move to 
+# an estimate prep file
 
-Controls {data-height=350}
+# if taking the mean, 0's are important
+# crcs use the dumb 'if there's a 0 i'll not add row' 
+# strategy to their data... like it's the 70's and 
+# we're still entering data on punch cards
+# below is adding 0's back in to the means,
+# being mindful that if dataset is incomplete
+# to preserve NA's
+
+
+# this is specifically dealing with cases where there was no coho catch in 
+# entire fisheries  - nearly all time step 5/1
+fisheries_no_catch <- pssp %>%
+    filter(is.na(day_type)) %>%
+    select(area_code = catch_area_code, regulation_type_code, start_datetime, end_datetime, starts_with('coho')) %>%
+    mutate(
+      across(starts_with('coho'), ~replace_na(.x, 0))
+    ) %>%
+    rowwise() %>%
+    mutate(
+      date = list(seq(as.Date(start_datetime), as.Date(end_datetime), by = '1 day'))
+    ) %>%
+    unnest_longer(date) %>% # explode stratum
+    mutate(
+    day_type = if_else(lubridate::wday(date) %in% c(1,6,7), 'WE', 'WD'), # weekday / weekend
+    time_step = case_when(
+      lubridate::month(date) %in% c(1,2,3,4,5,6) ~ 1L,
+      lubridate::month(date)  == 7 ~ 2L,
+      lubridate::month(date)  == 8 ~ 3L,
+      lubridate::month(date)  == 9 ~ 4L,
+      lubridate::month(date) %in% c(10, 11, 12) ~ 5L
+      ),
+    year = lubridate::year(date),
+    source = 'CRC'
+  )
+
+# crc estimate cycles should be continuous up to 3/31 of the preceding management year
+# we shouldn't have regulations into the future (this is what this tool does)
+# to figure out the management year take the max year in the regulations
+# say 2022 - everything after 2022-03-31 should either be intensive monitoring estimates
+# or covered by crcs we don't have yet (NA)
+
+# figure out most recent management year
+# DO NOT PUT FUTURE DATES IN THE REGULATIONS FILE
+management_year <- max(regs_day_type_count$year)
+
+no_catch_no_estimate <- fisheries_no_catch %>%
+  mutate(
+    across(starts_with('coho'), 
+           ~if_else(date >= as.Date(glue::glue('{management_year}-04-01')), NA_real_, .x)
+           )
+  )
+
+# this should be a list of fisheries where we don't have CRC estimates yet
+# no_catch_no_estimate %>%
+#   filter(is.na(coho_104_ad_ret)) %>%
+#   count(area_code, start_datetime, end_datetime)
+
+# this is a list of fisheries where the catch has been zero'd out (from CRC data)
+# no_catch_no_estimate %>%
+#   filter(!is.na(coho_104_ad_ret)) %>%
+#   count(area_code, start_datetime, end_datetime) %>%
+#   print(n=100)
+  
+# remove fisheries where there were no catch from estimates (added back in later dailyfied)
+pssp <- pssp %>%
+  filter(!is.na(day_type)) %>%
+  mutate(date = as.Date(date)) %>%
+  bind_rows(no_catch_no_estimate) %>%
+  filter(year >= 2004) # crc weirdness with 2003
+
+# now means make sense
+
+
+```
+
+
+
+```{r filtered_objects}
+# these block of code will make dataframes reactive objects.
+# i.e. when the variable pssp_at() is called farther down
+# this code it's referencing the reactive object below,
+# as the user changes the inputs of area, timestep, and years
+# the pssp_at() object executes the code below, dynamically filtering the
+# pssp dataframe to the users input represented by pssp_at() 
+
+pssp_at <- reactive({
+  filter(pssp, area_code == input$focal_area, time_step == input$focal_ts, year %in% input$years)
+})
+
+fram_at <- reactive({
+  filter(fs_ps_spt, area_code == input$focal_area, ts == input$focal_ts, yr %in% input$years)
+}) 
+
+recent_regs_at <- reactive({
+  filter(recent_regs, catch_area_code == input$focal_area, time_step == input$focal_ts)
+})
+
+pssp_reg_at <- reactive({
+    filter(pssp, area_code == input$focal_area, time_step == input$focal_ts, year %in% input$years, regulation_type_code == input$msf)
+})
+
+
+
+# pssp %>%
+#   group_by(day_type) %>%
+#   summarize(across(starts_with('coho'), mean, na.rm=T))
+
+```
+
+
+
+```{r default_controls}
+# these are the controls for the defaults for the weekday and weekend
+# inputs. the days are pulled from the most recent fishery by area/timestep
+# harvest is the mean selected from the year checkboxes
+
+# application supplied weekend/weekdays
+observeEvent(ignoreInit = TRUE, 
+             c(input$focal_area, input$focal_ts), {
+               
+  
+  wd_days <- recent_regs_at() %>%
+  # calculate most recent regulation weedays 
+    .$WD
+  
+  updateNumericInput(inputId = 'wday_df', value = wd_days )
+  
+  
+  we_days <- recent_regs_at() %>%
+    .$WE
+  
+  updateNumericInput(inputId = 'wend_df', value = we_days )
+  
+})
+
+# application supplied harvest per day
+observeEvent(ignoreInit = TRUE, 
+             c(input$focal_area, 
+               input$focal_ts,
+               input$years,
+               input$msf), {
+               
+    # catch errors
+  if(nrow(pssp_reg_at()) == 0){
+    modalDialog('There are no previous data to calculate mean harvest by day.
+                Defaulting to whatever data available')
+  } else {
+      
+    mean_harvest <- pssp_reg_at() |>
+    rowwise() |>
+      mutate(
+        # apportion unk mark-status to ad/um for retention
+        coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / sum(coho_104_ad_ret,coho_104_um_ret          , na.rm=T))),
+        coho_ad_k = replace_na(coho_104_ad_ret, 0),
+        coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret / sum(coho_104_ad_ret,coho_104_um_ret,        na.rm=T))),
+        coho_um_k = replace_na(coho_104_um_ret, 0),
+        total_retained_coho = sum(coho_104_ad_ret, coho_104_um_ret)
+      ) |>
+      group_by(time_step, area_code, day_type) %>%
+  summarize(mean_daily_harvest = mean(total_retained_coho, na.rm=T), .groups = 'drop') %>%
+  pivot_wider(names_from = day_type, values_from  = mean_daily_harvest) %>%
+  ungroup()
+  
+
+  
+  
+  wd_mean_harvest <- mean_harvest %>%
+    .$WD
+  
+  we_mean_harvest <- mean_harvest %>%
+    .$WE
+  
+  updateNumericInput(inputId = 'wend_hpd', value = round(we_mean_harvest))
+  
+  updateNumericInput(inputId = 'wday_hpd', value = round(wd_mean_harvest))
+    
+    
+  }
+  
+})
+
+
+
+```
+
+
+Controls {data-height=200}
 --------------------------------------------
 
 ### Weekday assumptions
-
 ```{r wkday_sliders}
+
+
+
 numericInput("wday_df", label = "Weekday Days fished",
             min = 0, max = 365, value = 20, step = 1, width = '100%')
 
-numericInput("wday_apd", label = "Weekday Anglers per day",
-            min = 0, max = 2000, value = 0, step = 5, width = '100%')
+# numericInput("wday_apd", label = "Weekday Anglers per day",
+#             min = 0, max = 2000, value = 0, step = 5, width = '100%')
 
-numericInput("wday_hapd", label = "Weekday Harvest per angler per day",
+numericInput("wday_hpd", label = "Weekday Harvest per angler per day",
             min = 0, max = 4, value = 0, step = 0.01, width = '100%')
 
 wday_harvest <- reactive({
-  input$wday_df * input$wday_apd * input$wday_hapd
-})
-
-wday_anglers <- reactive({
-  input$wday_df * input$wday_apd
+  input$wday_df * input$wday_hpd
 })
 
 ```
@@ -213,26 +438,26 @@ wday_anglers <- reactive({
 
 ```{r wkend_sliders}
 numericInput("wend_df", label = "Weekend Days fished",
-            min = 0, max = 365, value = 10, step = 1, width = '100%')
+            min = 0, max = 365, value = 20, step = 1, width = '100%')
 
-numericInput("wend_apd", label = "Weekend Anglers per day",
-            min = 0, max = 2000, value = 0, step = 5,  width = '100%')
+# numericInput("wend_apd", label = "Weekend Anglers per day",
+#             min = 0, max = 2000, value = 0, step = 5,  width = '100%')
 
-numericInput("wend_hapd", label = "Weekend Harvest per angler per day",
+numericInput("wend_hpd", label = "Weekend Harvest per angler per day",
             min = 0, max = 4, value = 0, step = 0.01,  width = '100%')
 
 wend_harvest <- reactive({
-  input$wend_df * input$wend_apd * input$wend_hapd
+  input$wend_df * input$wend_hpd
 })
 
-wend_anglers <- reactive({
-  input$wend_df * input$wend_apd
-})
 
 ```
 
 
-Years {data-height=100}
+
+
+
+Years {data-height=125}
 --------------------------------------------
 
 ### Year selection
@@ -244,217 +469,24 @@ checkboxGroupInput("years", "Focal years", inline = T, width = '100%',
                    )
 ```
 
-```{r filtered_objects}
-# these block of code will make dataframes reactive objects.
-# i.e. when the variable pssp_at() is called farther down
-# this code it's referencing the reactive object below,
-# as the user changes the inputs of area, timestep, and years
-# the pssp_at() object executes the code below, dynamically filtering the
-# pssp dataframe to the users input represented by pssp_at() 
-
-pssp_at <- reactive({
-  filter(pssp, area_code == input$focal_area, time_step == input$focal_ts, yr %in% input$years)
-})
-
-rmis_cs_at <- reactive({
-  filter(rmis_cs, area_code == input$focal_area, ts == input$focal_ts, yr %in% input$years)
-}) 
-
-crc_at <- reactive({
-  filter(crc, area_code == input$focal_area, ts == input$focal_ts)
-}) 
-
-fram_at <- reactive({
-  filter(fs_ps_spt, area_code == input$focal_area, ts == input$focal_ts)
-}) 
-
-ests_at <- reactive({
-  filter(coho_ests, area_code == input$focal_area, time_step == input$focal_ts)
-})
-
-
-```
 
 Data {.tabset data-height=800}
 --------------------------------------------
 
-### PSSP effort obs (data from *mvw_dockside_salmon*, refreshed Nov 22, 2022)
-
-```{r gt_anglers}
-gt::render_gt({
-  sample_rate_median <- if_else(nrow(rmis_cs_at()) > 0, median(rmis_cs_at()$sample_rate), NA_real_)
-  pssp_at_gt <- pssp_at() |> 
-    group_by(area_code, yr, week_day_type) |>
-    summarise(
-      n_obs = n(),
-      across(
-        c(anglers),
-        list(
-          q50 = ~round(quantile(., 0.5, na.rm=T), 0),
-          mu = ~round(mean(., na.rm=T), 0),
-          q95 = ~round(quantile(., 0.95, na.rm=T), 0)
-        ),
-        .names = "{.fn}"), .groups = "drop") |>
-    pivot_wider(names_from = week_day_type, values_from = c(n_obs, q50, mu, q95)) |> 
-    arrange(desc(yr)) |>
-    left_join(
-      rmis_cs_at() |> select(area_code, yr, sample_rate),
-      by = c("area_code", "yr")
-    ) |> 
-    mutate(
-      # this effectively imputes the sample rate
-      sample_rate = if_else(is.na(sample_rate), sample_rate_median, sample_rate),
-      across(
-        q50_wkday:q95_wkend,
-        list(expnd = ~round(replace_na(.,0) / sample_rate, 0))
-      )
-    ) |> 
-    select(area_code, yr, contains("wkday"), contains("wkend"))
-  
-  gt::gt(data = pssp_at_gt) |> 
-    gt::cols_hide(area_code) |> 
-    gt::tab_spanner("Weekday sampled", columns = ends_with("wkday")) |> 
-    gt::tab_spanner("Weekday expanded", columns = ends_with("wkday_expnd")) |> 
-    gt::tab_spanner("Weekend sampled", columns = ends_with("wkend")) |> 
-    gt::tab_spanner("Weekend expanded", columns = ends_with("wkend_expnd")) |> 
-    gt::tab_header(
-      title = paste("Sampled and expanded anglers/day in Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
-      ) |> 
-    gt::tab_style(
-      style = cell_fill("#D3D3D3"),
-      locations = cells_body(columns = c("q50_wkday_expnd", "q50_wkend_expnd"))
-    ) |> 
-    gt::tab_style(
-      style = cell_fill("#FFC46B"),
-      locations = cells_body(
-        columns = n_obs_wkday:q95_wkday_expnd,
-        rows = is.na(n_obs_wkday) | n_obs_wkday <= 5
-        )
-    ) |> 
-    gt::tab_style(
-      style = cell_fill("#FFC46B"),
-      locations = cells_body(
-        columns = n_obs_wkend:q95_wkend_expnd,
-        rows = is.na(n_obs_wkend) | n_obs_wkend <= 5
-      )
-    ) |> 
-    gt::summary_rows(
-      columns = ends_with("_expnd"),
-      fns = list(
-        min = ~min(.),
-        med = ~median(.),
-        mean = ~mean(.),
-        max = ~max(.)
-      ),
-      formatter = fmt_number
-    ) |> 
-    gt::tab_options(
-      table.width = "100%"
-    )
-  })
-```
-
-### PSSP kept obs (data from *mvw_dockside_salmon*, refreshed Nov 22, 2022)
-
-```{r gg_kpa}
-renderPlot({
-  pssp_at_q <- bind_rows(
-    pssp_at() |>  
-      pivot_longer(names_to = "kpa_type",
-                   values_to = "kpa", 
-                   cols = c(coho_kept_per_angler, coho_kept_ad_per_angler)) |> 
-      group_by(area_code, yr, week_day_type, kpa_type) |>
-      summarise(
-        n_obs = n(),
-        across(kpa,
-               list(
-                 q05 = ~round(quantile(., 0.05, na.rm=T), 2),
-                 q25 = ~round(quantile(., 0.25, na.rm=T), 2),
-                 q50 = ~round(quantile(., 0.5, na.rm=T), 2),
-                 q75 = ~round(quantile(., 0.75, na.rm=T), 2),
-                 q95 = ~round(quantile(., 0.95, na.rm=T), 2),
-                 mu = ~round(mean(., na.rm=T), 2)
-               ),
-               .names = "{.fn}"), .groups = "drop") |>
-      arrange(desc(yr))
-    ,
-    pssp_at() |>  
-      pivot_longer(names_to = "kpa_type",
-                   values_to = "kpa", 
-                   cols = c(coho_kept_per_angler, coho_kept_ad_per_angler))|> 
-      group_by(area_code, week_day_type, kpa_type) |>
-      summarise(
-        yr = "pooled",
-        n_obs = n(),
-        across(kpa,
-               list(
-                 q05 = ~round(quantile(., 0.05, na.rm=T), 2),
-                 q25 = ~round(quantile(., 0.25, na.rm=T), 2),
-                 q50 = ~round(quantile(., 0.5, na.rm=T), 2),
-                 q75 = ~round(quantile(., 0.75, na.rm=T), 2),
-                 q95 = ~round(quantile(., 0.95, na.rm=T), 2),
-                 mu = ~round(mean(., na.rm=T), 2)
-               ),
-               .names = "{.fn}"), .groups = "drop")
-  )
-  
-  pssp_at_q |> 
-    ggplot(aes(x = yr, y = mu, color = kpa_type, group = kpa_type)) +
-    coord_flip() +
-    geom_linerange(aes(ymin = q05, ymax = q95), position = position_dodge(width = 0.4)) +
-    geom_pointrange(aes(ymin = q25, ymax = q75), size = 1.1, position = position_dodge(width = 0.4)) +
-    geom_point(aes(x = yr, y = mu), shape = 4, size = 6, position = position_dodge(width = 0.4)) +
-    geom_text(aes(x = yr, y = 0, label = n_obs), nudge_y = -0.05) +
-    geom_text(aes(x = yr, y = q05, label = q05), position = position_dodge(width = 1.1)) +
-    #geom_text(aes(x = yr, y = q50, label = q50), position = position_dodge(width = 1.3)) +
-    geom_text(aes(x = yr, y = mu, label = mu), position = position_dodge(width = 1.5)) +
-    geom_text(aes(x = yr, y = q95, label = q95), position = position_dodge(width = 1.1)) +
-    geom_hline(
-      data = tibble(
-        week_day_type = c("wkday", "wkend"), 
-        yint = c(input$wday_hapd, input$wend_hapd)
-        ),
-      aes(yintercept = yint), size = 1.7, color = pal_wkend) +
-    facet_wrap(~week_day_type, scales = "free_x") +
-    scale_x_discrete("") +
-    scale_y_continuous("Coho kept per angler per day") +
-    scale_color_manual(values = c("coho_kept_per_angler" = "#D2A554", "coho_kept_ad_per_angler" = "#A4BADF")) +
-    labs(
-      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
-      ) +
-    theme(
-      text = element_text(size = 20),
-      legend.position = "bottom"
-      )
-})
-
-
-
-
-
-```
-
 ### FRAM
-
 ```{r gg_fram}
 renderPlot({
-  
-  # fs_ps_spt_test <- fs_ps_spt |>
-  #   filter(area_code == '12', ts == 4, yr >= 2009)
-  # 
-  # coho_ests_test <- coho_ests |>
-  #   filter(area_code == '12', time_step == 4, year >= 2009)
 
 
-  fram_ests <- ests_at() |>
+  fram_ests <- pssp_at() |>
     rowwise() |>
     mutate(
       # apportion unk mark-status to ad/um for retention
-      coho_ad_k = coho_ad_k + (coho_unk_k * (coho_ad_k / sum(coho_ad_k,coho_um_k, na.rm=T))),
-      coho_ad_k = replace_na(coho_ad_k, 0),
-      coho_um_k = coho_um_k + (coho_unk_k * (coho_um_k / sum(coho_ad_k,coho_um_k, na.rm=T))),
-      coho_um_k = replace_na(coho_um_k, 0),
-      total_retained_coho = sum(coho_ad_k, coho_um_k)
+      coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / sum(coho_104_ad_ret,coho_104_um_ret , na.rm=T))),
+      coho_ad_k = replace_na(coho_104_ad_ret, 0),
+      coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret / sum(coho_104_ad_ret,coho_104_um_ret, na.rm=T))),
+      coho_um_k = replace_na(coho_104_um_ret, 0),
+      total_retained_coho = sum(coho_104_ad_ret, coho_104_um_ret)
     ) |>
     group_by(year, time_step, area_code, source) |>
     summarize(across(c(coho_ad_k, coho_um_k, total_retained_coho), sum, na.rm=T), .groups = 'drop') |>
@@ -466,6 +498,7 @@ renderPlot({
       ) |>
     select(yr_type, yr, ts, type, area_code, var = source, val = total_retained_coho)     |>
     bind_rows(fram_at())
+  
 
 
   fram_ests |> ggplot(aes(yr_type, val, fill = var)) +
@@ -487,49 +520,7 @@ renderPlot({
       text = element_text(size = 20),
       axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
       )
-#--------------------------------------------------------------  
-#   fram_at() |> 
-#     ggplot(aes(yr_type, val, fill = var)) + 
-#     geom_col(position = position_stack(), alpha = 0.7) + 
-#     geom_col(data = filter(fram_at(), type == "pst"), position = position_stack(), alpha = 1) + 
-#     geom_hline(yintercept = wday_harvest() + wend_harvest()) +
-#     scale_y_continuous("FRAM inputs", sec.axis = dup_axis(), labels = scales::comma) +
-#     scale_fill_manual(values = c("Quota" = "#D2A554", "MSFQuota" = "#A4BADF")) +
-#     labs(
-#       subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
-#     ) +
-#     theme(
-#       text = element_text(size = 20),
-#       axis.text.x=element_text(angle=90,hjust=1)
-#       )
-})
-
-
-```
-
-### CRC estimates
-
-```{r gg_crc}
-renderPlot({
-  crc_at() |> 
-    ggplot(aes(yr, catchest, fill = m)) + 
-    geom_col(position = position_stack()) + 
-    geom_hline(yintercept = wday_harvest() + wend_harvest()) +
-    scale_y_continuous("CRC harvest estimate", sec.axis = dup_axis(), labels = scales::comma) +
-    scale_fill_manual(values = pal_m) +
-    labs(
-      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
-    ) +
-    theme(
-      text = element_text(size = 20)
-      )
 })
 
 ```
 
-### Estimates
-
-```{r estimate_table}
-DT::renderDT({out$est})
-
-```

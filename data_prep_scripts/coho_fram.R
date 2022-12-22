@@ -16,7 +16,7 @@ sql <- "SELECT RunID.RunYear,
         FROM Fishery
         RIGHT JOIN (RunID RIGHT JOIN FisheryScalers ON RunID.RunID = FisheryScalers.RunID) ON
         Fishery.FisheryID = FisheryScalers.FisheryID
-        WHERE (((RunID.RunYear)>='2009') AND 
+        WHERE (((RunID.RunYear)>='2003') AND 
         ((Fishery.Species)='COHO') AND 
         ((FisheryScalers.FisheryID) In (91,92,93,107,118,129,152,136,106,115)));"
 
@@ -44,7 +44,7 @@ fs_ps_spt <- bind_rows( # append post-season data to pre-season date
   pre_fram |> mutate(type = "pre"),
   post_fram |> mutate(type = "pst")
 ) |>
-  filter(RunYear >= 2009, FisheryFlag != 0) |> #count(type)
+  filter(RunYear >= 2003, FisheryFlag != 0) |> #count(type)
   select(type, yr = RunYear, FisheryName, ts = TimeStep, ff = FisheryFlag, Quota, MSFQuota) |>
   mutate(
     area_code = str_remove_all(FisheryName, "Area|Spt|Ar|-") |> str_trim() |> str_pad(width = 2, pad = "0"),
