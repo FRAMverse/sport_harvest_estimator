@@ -151,10 +151,9 @@ radioButtons("focal_ts", label = "Focal Timestep",
              choiceNames = paste(1:5, c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":"), 
              selected = 4, inline = T, width = '100%')
 
-radioButtons("msf", label = "Mark Selective",
-             choiceValues = c('NS', 'MSF'), 
-             choiceNames = c('No', 'Yes'), 
-             selected = 'MSF', inline = T, width = '100%')
+checkboxGroupInput("msf", label = "Regulation",
+             choices = c('NS', 'MSF'), 
+             selected = c('NS','MSF'), inline = T, width = '100%')
 
 
 
@@ -272,7 +271,7 @@ management_year <- max(regs_day_type_count$year)
 
 no_catch_no_estimate <- fisheries_no_catch %>%
   mutate(
-    across(starts_with('coho'), 
+    across(starts_with('coho'),
            ~if_else(date >= as.Date(glue::glue('{management_year}-04-01')), NA_real_, .x)
            )
   )
@@ -287,7 +286,7 @@ no_catch_no_estimate <- fisheries_no_catch %>%
 #   filter(!is.na(coho_104_ad_ret)) %>%
 #   count(area_code, start_datetime, end_datetime) %>%
 #   print(n=100)
-  
+
 # remove fisheries where there were no catch from estimates (added back in later dailyfied)
 pssp <- pssp %>%
   filter(!is.na(day_type)) %>%
@@ -297,6 +296,26 @@ pssp <- pssp %>%
 
 # now means make sense
 
+# pre-process chart
+
+# fram_chart <- pssp |>
+#   group_by(year, time_step, area_code, source) |>
+#   summarize(across(starts_with('coho'), sum, na.rm=T), .groups = 'drop') |>
+#     rowwise() |>
+#     mutate(
+#       # apportion unk mark-status to ad/um for retention
+#       coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / sum(coho_104_ad_ret,coho_104_um_ret , na.rm=T))),
+#       coho_ad_k = replace_na(coho_104_ad_ret, 0),
+#       coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret /    sum(coho_104_ad_ret,coho_104_um_ret, na.rm=T))),
+#       coho_um_k = replace_na(coho_104_um_ret, 0),
+#       total_retained_coho = sum(coho_104_ad_ret, coho_104_um_ret),
+#       yr_type = paste0(year, '_pst_ests'),
+#       yr = as.character(year),
+#       ts = time_step,
+#       type = 'ests'
+#       ) |>
+#     select(yr_type, yr, ts, type, area_code, var = source, val = total_retained_coho)     |>
+#     bind_rows(fs_ps_spt)
 
 ```
 
@@ -311,19 +330,23 @@ pssp <- pssp %>%
 # pssp dataframe to the users input represented by pssp_at() 
 
 pssp_at <- reactive({
-  filter(pssp, area_code == input$focal_area, time_step == input$focal_ts, year %in% input$years)
+  filter(pssp, 
+         area_code == input$focal_area,
+         time_step == input$focal_ts, 
+         year %in% input$years, regulation_type_code %in% input$msf)
 })
 
 fram_at <- reactive({
-  filter(fs_ps_spt, area_code == input$focal_area, ts == input$focal_ts, yr %in% input$years)
+  filter(fs_ps_spt, 
+         area_code == input$focal_area, 
+         ts == input$focal_ts, 
+         yr %in% input$years)
 }) 
 
 recent_regs_at <- reactive({
-  filter(recent_regs, catch_area_code == input$focal_area, time_step == input$focal_ts)
-})
-
-pssp_reg_at <- reactive({
-    filter(pssp, area_code == input$focal_area, time_step == input$focal_ts, year %in% input$years, regulation_type_code == input$msf)
+  filter(recent_regs,
+         catch_area_code == input$focal_area, 
+         time_step == input$focal_ts)
 })
 
 
@@ -342,68 +365,76 @@ pssp_reg_at <- reactive({
 # harvest is the mean selected from the year checkboxes
 
 # application supplied weekend/weekdays
-observeEvent(ignoreInit = TRUE, 
+observeEvent(ignoreInit = TRUE,
              c(input$focal_area, input$focal_ts), {
-               
-  
+
+
   wd_days <- recent_regs_at() %>%
-  # calculate most recent regulation weedays 
+  # calculate most recent regulation weedays
     .$WD
-  
+
   updateNumericInput(inputId = 'wday_df', value = wd_days )
-  
-  
+
+
   we_days <- recent_regs_at() %>%
     .$WE
-  
+
   updateNumericInput(inputId = 'wend_df', value = we_days )
-  
+
 })
 
 # application supplied harvest per day
-observeEvent(ignoreInit = TRUE, 
-             c(input$focal_area, 
+observeEvent(ignoreInit = TRUE,
+             c(input$focal_area,
                input$focal_ts,
                input$years,
                input$msf), {
-               
-    # catch errors
-  if(nrow(pssp_reg_at()) == 0){
-    modalDialog('There are no previous data to calculate mean harvest by day.
-                Defaulting to whatever data available')
+
+  # catch a corner case, if user input doesn't have fisheries to
+  # take a mean of, turn off the regulation filtering
+  if(nrow(pssp_at()) == 0){
+    showModal(modalDialog(
+      title = 'No Usuable Data',
+      'There are no previous data to calculate mean harvest by day. 
+      Defaulting to whatever data available')
+    )
+    
+    updateCheckboxGroupInput(inputId = 'msf', selected = c('NS', 'MSF'))
+    updateCheckboxGroupInput(inputId = 'years', selected = 2004:2022)
   } else {
-      
-    mean_harvest <- pssp_reg_at() |>
-    rowwise() |>
+    
+    mean_harvest <- pssp_at() |>
       mutate(
+        # take care of NA's
+        across(starts_with('coho'), ~replace_na(.x, 0)),
         # apportion unk mark-status to ad/um for retention
-        coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / sum(coho_104_ad_ret,coho_104_um_ret          , na.rm=T))),
+        coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / (coho_104_ad_ret + coho_104_um_ret ))),
         coho_ad_k = replace_na(coho_104_ad_ret, 0),
-        coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret / sum(coho_104_ad_ret,coho_104_um_ret,        na.rm=T))),
+        coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret /  (coho_104_ad_ret + coho_104_um_ret ))),
         coho_um_k = replace_na(coho_104_um_ret, 0),
-        total_retained_coho = sum(coho_104_ad_ret, coho_104_um_ret)
+        total_retained_coho = coho_ad_k + coho_um_k
       ) |>
       group_by(time_step, area_code, day_type) %>%
-  summarize(mean_daily_harvest = mean(total_retained_coho, na.rm=T), .groups = 'drop') %>%
-  pivot_wider(names_from = day_type, values_from  = mean_daily_harvest) %>%
-  ungroup()
-  
+      summarize(mean_daily_harvest = mean(total_retained_coho, na.rm=T), .groups = 'drop') %>%
+      pivot_wider(names_from = day_type, values_from  = mean_daily_harvest) %>%
+      ungroup()
 
-  
-  
+
+
+
   wd_mean_harvest <- mean_harvest %>%
     .$WD
-  
+
   we_mean_harvest <- mean_harvest %>%
     .$WE
-  
+
   updateNumericInput(inputId = 'wend_hpd', value = round(we_mean_harvest))
-  
+
   updateNumericInput(inputId = 'wday_hpd', value = round(wd_mean_harvest))
-    
-    
+
+
   }
-  
+
 })
 
 
@@ -425,7 +456,7 @@ numericInput("wday_df", label = "Weekday Days fished",
 # numericInput("wday_apd", label = "Weekday Anglers per day",
 #             min = 0, max = 2000, value = 0, step = 5, width = '100%')
 
-numericInput("wday_hpd", label = "Weekday Harvest per angler per day",
+numericInput("wday_hpd", label = "Mean Weekday Day Harvest",
             min = 0, max = 4, value = 0, step = 0.01, width = '100%')
 
 wday_harvest <- reactive({
@@ -443,7 +474,7 @@ numericInput("wend_df", label = "Weekend Days fished",
 # numericInput("wend_apd", label = "Weekend Anglers per day",
 #             min = 0, max = 2000, value = 0, step = 5,  width = '100%')
 
-numericInput("wend_hpd", label = "Weekend Harvest per angler per day",
+numericInput("wend_hpd", label = "Mean Weekend Day Harvest",
             min = 0, max = 4, value = 0, step = 0.01,  width = '100%')
 
 wend_harvest <- reactive({
@@ -476,9 +507,9 @@ Data {.tabset data-height=800}
 ### FRAM
 ```{r gg_fram}
 renderPlot({
-
-
   fram_ests <- pssp_at() |>
+    group_by(year, time_step, area_code, source) |>
+    summarize(across(starts_with('coho'), sum, na.rm=T), .groups = 'drop') |>
     rowwise() |>
     mutate(
       # apportion unk mark-status to ad/um for retention
@@ -486,11 +517,7 @@ renderPlot({
       coho_ad_k = replace_na(coho_104_ad_ret, 0),
       coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret / sum(coho_104_ad_ret,coho_104_um_ret, na.rm=T))),
       coho_um_k = replace_na(coho_104_um_ret, 0),
-      total_retained_coho = sum(coho_104_ad_ret, coho_104_um_ret)
-    ) |>
-    group_by(year, time_step, area_code, source) |>
-    summarize(across(c(coho_ad_k, coho_um_k, total_retained_coho), sum, na.rm=T), .groups = 'drop') |>
-    mutate(
+      total_retained_coho = sum(coho_104_ad_ret, coho_104_um_ret),
       yr_type = paste0(year, '_pst_ests'),
       yr = as.character(year),
       ts = time_step,
@@ -503,8 +530,8 @@ renderPlot({
 
   fram_ests |> ggplot(aes(yr_type, val, fill = var)) +
     geom_col(position = position_stack(), alpha = 0.7) +
-      geom_col(data = filter(fram_ests, type == "ests"), position = position_stack(), alpha = .6) +
-    geom_col(data = filter(fram_ests, type == "pst"), position = position_stack(), alpha = 1) +
+    #geom_col(data = filter(fram_ests, type == "ests"), position = position_stack(), alpha = .6) +
+    #geom_col(data = filter(fram_ests, type == "pst"), position = position_stack(), alpha = 1) +
     geom_hline(yintercept = wday_harvest() + wend_harvest()) +
     scale_y_continuous("FRAM inputs", sec.axis = dup_axis(), labels = scales::comma) +
     scale_fill_manual(values = c(
@@ -524,3 +551,33 @@ renderPlot({
 
 ```
 
+### Daily Harvest
+```{r gg_daily}
+renderPlot({
+  day_plot <- pssp_at() |>
+      mutate(
+        # take care of NA's
+        across(starts_with('coho'), ~replace_na(.x, 0)),
+        # apportion unk mark-status to ad/um for retention
+        coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / (coho_104_ad_ret + coho_104_um_ret ))),
+        coho_ad_k = replace_na(coho_104_ad_ret, 0),
+        coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret /  (coho_104_ad_ret + coho_104_um_ret ))),
+        coho_um_k = replace_na(coho_104_um_ret, 0),
+        total_retained_coho = coho_ad_k + coho_um_k
+      )
+  
+  day_plot |> 
+    ggplot(aes(factor(year), total_retained_coho, fill = day_type, fill = day_type )) +
+    geom_boxplot() +
+    labs(
+      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ",")),
+      y = 'Total Retained Coho',
+      x = 'Day Type'
+    ) + 
+    theme(
+      text = element_text(size = 20)
+      )
+    
+})
+
+```
