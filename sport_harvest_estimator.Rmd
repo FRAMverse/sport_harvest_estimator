@@ -186,37 +186,29 @@ renderValueBox({
 ### Output
 
 ```{r keep_dl_buttons}
-textInput("rationale", label = "Rationale")
 
+
+textInput("rationale", label = "Rationale")
 actionButton("keep", label = "Keep estimates")
 
-downloadButton("download", label = "Download csv")
 
 ```
 
-```{r keep_dl}
-reactive({
+```{r keeper, echo=F}
+observeEvent(
+  input$keep,{
   est_row <- data.frame(
-    area_code = input$focal_area,
-    timestep = input$focal_ts,
-    est = wday_harvest()+wend_harvest(),
-    wday_df = input$wday_df, wend_df = input$wend_df,
-    wday_hapd = input$wday_hpd, wend_hpd = input$wend_hpd,
-    rationale = input$rationale
-    )
+     area_code = input$focal_area,
+     timestep = input$focal_ts,
+     est = wday_harvest()+wend_harvest(),
+     wday_df = input$wday_df, wend_df = input$wend_df,
+     wday_hpd = input$wday_hpd, wend_hpd = input$wend_hpd,
+     rationale = input$rationale
+     )
 
-  out$est <- rows_update(out$est, est_row, by = c("area_code", "timestep"))
-  }) |> 
-  bindEvent(input$keep)
+   out$est <- rows_update(out$est, est_row, by = c("area_code", "timestep"))
+})
 
-downloadHandler(
-  filename = function() {
-    paste("coho_sport_harvest_est_", Sys.Date(), ".csv", sep="")
-  },
-  content = function(file) {
-    write_csv(out$est, file)
-  }
-)
 
 ```
 
@@ -579,5 +571,31 @@ renderPlot({
       )
     
 })
-
 ```
+
+### Saved Inputs
+```{r, download_link}
+downloadLink("download", label = "Download csv")
+output$download <- downloadHandler(
+  filename = function() {
+    paste("coho_sport_harvest_est_", Sys.Date(), ".csv", sep="")
+  },
+  content = function(file) {
+    write_csv(out$est, file)
+  }
+)
+```
+
+```{r ests_table}
+renderTable({
+  out$est
+})
+```
+
+```{css est_table}
+#section-saved-inputs
+  .chart-shim {
+    overflow-y: scroll;
+    }
+```
+
