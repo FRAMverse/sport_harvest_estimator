@@ -8,7 +8,7 @@ source(here::here('data_prep_scripts/coho_estimates.R'))
 
 
 # comments on the data associated with this update
-comment <- 'coho daily estimates - debugging'
+comment <- 'removal of post-season fram'
 
 # save to sqlite database
 con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))

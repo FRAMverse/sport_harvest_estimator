@@ -325,14 +325,15 @@ pssp_at <- reactive({
   filter(pssp, 
          area_code == input$focal_area,
          time_step == input$focal_ts, 
-         year %in% input$years, regulation_type_code %in% input$msf)
+         year %in% input$years)
 })
 
 fram_at <- reactive({
-  filter(fs_ps_spt, 
+    filter(fs_ps_spt,
          area_code == input$focal_area, 
          ts == input$focal_ts, 
-         yr %in% input$years)
+         yr %in% input$years
+    )
 }) 
 
 recent_regs_at <- reactive({
@@ -342,6 +343,20 @@ recent_regs_at <- reactive({
 })
 
 
+# consider putting these filters in the reactive containers 
+pssp_at_reg <- reactive({
+  filter(pssp_at(), regulation_type_code %in% input$msf)
+})
+
+fram_at_reg <- reactive({
+  fram_at() %>%
+    mutate(
+      selector = if_else(var == 'MSFQuota', 'MSF', 'NS') 
+    ) %>%
+    filter(
+         selector %in% input$msf
+         ) %>% select(-selector)
+}) 
 
 # pssp %>%
 #   group_by(day_type) %>%
@@ -384,7 +399,7 @@ observeEvent(ignoreInit = TRUE,
 
   # catch a corner case, if user input doesn't have fisheries to
   # take a mean of, turn off the regulation filtering
-  if(nrow(pssp_at()) == 0){
+  if(nrow(pssp_at_reg()) == 0){
     showModal(modalDialog(
       title = 'No Usuable Data',
       'There are no previous data to calculate mean harvest by day. 
@@ -395,7 +410,7 @@ observeEvent(ignoreInit = TRUE,
     updateCheckboxGroupInput(inputId = 'years', selected = 2004:2022)
   } else {
     
-    mean_harvest <- pssp_at() |>
+    mean_harvest <- pssp_at_reg() |>
       mutate(
         # take care of NA's
         across(starts_with('coho'), ~replace_na(.x, 0)),
@@ -499,7 +514,7 @@ Data {.tabset data-height=800}
 ### FRAM
 ```{r gg_fram}
 renderPlot({
-  fram_ests <- pssp_at() |>
+  fram_ests <- pssp_at_reg() |>
     group_by(year, time_step, area_code, source) |>
     summarize(across(starts_with('coho'), sum, na.rm=T), .groups = 'drop') |>
     rowwise() |>
@@ -516,7 +531,7 @@ renderPlot({
       type = 'ests'
       ) |>
     select(yr_type, yr, ts, type, area_code, var = source, val = total_retained_coho)     |>
-    bind_rows(fram_at())
+    bind_rows(fram_at_reg())
   
 
 
@@ -546,7 +561,7 @@ renderPlot({
 ### Daily Harvest
 ```{r gg_daily}
 renderPlot({
-  day_plot <- pssp_at() |>
+  day_plot <- pssp_at_reg() |>
       mutate(
         # take care of NA's
         across(starts_with('coho'), ~replace_na(.x, 0)),
@@ -573,6 +588,59 @@ renderPlot({
 })
 ```
 
+### FRAM Performance
+
+```{r fram_performance}
+
+renderPlot({
+  ests <- pssp_at() %>%
+    mutate(
+      # take care of NA's
+      across(starts_with('coho'), ~replace_na(.x, 0)),
+      # apportion unk mark-status to ad/um for retention
+      coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / (coho_104_ad_ret + coho_104_um_ret ))),
+      coho_ad_k = replace_na(coho_104_ad_ret, 0),
+      coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret /  (coho_104_ad_ret + coho_104_um_ret ))),
+      coho_um_k = replace_na(coho_104_um_ret, 0),
+      total_retained_coho = coho_ad_k + coho_um_k
+    ) |>
+    group_by(time_step, area_code, year) %>%
+    summarize(total_retained_coho = sum(total_retained_coho, na.rm=T), .groups = 'drop')
+  
+  fram <- fram_at() %>%
+    mutate(
+      year = as.integer(yr),
+      time_step = ts
+    ) %>%
+    group_by(year, time_step, area_code) %>%
+    summarize(predicted_retained_coho = sum(val, na.rm=T), groups = 'drop')
+  
+  fram %>%
+    inner_join(ests) %>%
+  mutate(
+    percent = (total_retained_coho - predicted_retained_coho) / predicted_retained_coho,
+    type = percent < 0
+  ) %>%
+    ggplot(aes(factor(year), percent, fill = type)) +
+    geom_col(alpha = 0.8) +
+    labs(
+      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ",")),
+      x = NULL,
+      y = 'Percent Difference of Modeled Quota'
+    ) +
+    scale_y_continuous(labels = scales::percent) +
+    theme(
+      axis.text.x = element_text(angle = 90,vjust = 0.5, hjust=1),
+      text = element_text(size = 20),
+      legend.position = 'none'
+    )
+  
+  
+})
+```
+
+
+
 ### Saved Inputs
 ```{r, download_link}
 downloadLink("download", label = "Download csv")
@@ -598,4 +666,6 @@ renderTable({
     overflow-y: scroll;
     }
 ```
+
+
 
