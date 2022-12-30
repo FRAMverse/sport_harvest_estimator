@@ -53,6 +53,8 @@ out <- reactiveValues(
 
 
 ```{r pull_data}
+
+
 # connect to database
 con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
 # pull necessary tables and view
