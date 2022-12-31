@@ -15,7 +15,7 @@ output:
 runtime: shiny
 ---
 
-```{r setup, include=FALSE}
+```{r setup_libraries, include=FALSE}
 knitr::opts_chunk$set(comment = "#>", warning = F, echo = F)
 
 library("flexdashboard")
@@ -24,6 +24,45 @@ library("shiny")
 library("patchwork")
 library("gt")
 
+
+
+```
+
+```{r setup_db, include=FALSE}
+
+# this is checking if the application is in a container
+# (on the open internet) if it's not,
+# it won't connect to the mongo db for storing user inputs
+# pure web develop stuff has no influence on fish data
+
+
+on_web_server = file.exists('/.dockerenv')
+
+if (on_web_server){
+  # load mongo, connect
+  library("mongolite")
+  user_ests <- mongo(collection='user_ests')
+  
+  # if saved dataframe doesn't exist yet populate it
+  if (nrow(user_ests$find()) == 0) {
+    user_ests$insert(
+      expand_grid(
+        area_code = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"),
+        timestep = as.character(1:5),
+        est = 0, 
+        wday_df = 0, wend_df = 0,
+        wday_hpd = 0, wend_hpd = 0,
+        rationale = ""
+      )
+      
+    )
+  }
+}
+
+```
+
+
+```{r setup_theme, include=FALSE}
 theme_set(theme_light())
 
 pal_wkend <- c(wday = grey(0.3), wend = grey(0.8))
@@ -38,40 +77,52 @@ pal_ts <- set_names(
    paste(1:5, c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":")
 )
 
-
-out <- reactiveValues(
-  est = expand_grid(
-    area_code = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"),
-    timestep = as.character(1:5),
-    est = 0, 
-    wday_df = 0, wend_df = 0,
-    wday_hpd = 0, wend_hpd = 0,
-    rationale = ""
+# this is on someone's personal computer 
+# and not on a web server this table needs
+# to be stored locally
+if (on_web_server == FALSE){
+  out <- reactiveValues(
+    est = expand_grid(
+      area_code = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"),
+      timestep = as.character(1:5),
+      est = 0,
+      wday_df = 0, wend_df = 0,
+      wday_hpd = 0, wend_hpd = 0,
+      rationale = ""
+    )
   )
-)
+}
+
+
+
 ```
 
 
 ```{r pull_data}
+# if on a web server pull data from a saved environment
+# if it's not, pull from the sqlite datbase
+if (on_web_server){
+  load(file = "sport_harvest_estimator.RData")
+} else {
+  # connect to database
+  con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
+  # pull necessary tables and view
+  
+  # puget sound creel information merged to regulation
+  pssp <- DBI::dbReadTable(con, 'vw_estimates_by_regulation')
+  
+  
+  # puget sound creel information merged to regulation
+  regs <- DBI::dbReadTable(con, 'coho_regulations')
+  
+  
+  # compilation of FRAM parameters from post-season and pre-season databases
+  fs_ps_spt <- DBI::dbReadTable(con, 'coho_fram')
+  
+  # disconnect from database
+  DBI::dbDisconnect(con)
 
-
-# connect to database
-con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
-# pull necessary tables and view
-
-# puget sound creel information merged to regulation
-pssp <- DBI::dbReadTable(con, 'vw_estimates_by_regulation')
-
-
-# puget sound creel information merged to regulation
-regs <- DBI::dbReadTable(con, 'coho_regulations')
-
-
-# compilation of FRAM parameters from post-season and pre-season databases
-fs_ps_spt <- DBI::dbReadTable(con, 'coho_fram')
-
-# disconnect from database
-DBI::dbDisconnect(con)
+}
 
 
 
@@ -112,7 +163,7 @@ recent_regs <- regs_day_type_count %>%
   ungroup()
 
 
-#load(file = "sport_harvest_estimator.RData")
+
 ```
 
 About
@@ -207,8 +258,27 @@ observeEvent(
      wday_hpd = input$wday_hpd, wend_hpd = input$wend_hpd,
      rationale = input$rationale
      )
+  
+  if (on_web_server){
+    # pull df out of mongo
+    est <- user_ests$find()
+    
+    # insert modified df
+    est_insert <- rows_update(est, est_row, by = c("area_code", "timestep"))
+    
+    #remove previous data
+    user_ests$remove('{}')
+    
+    #put new data in 
+    user_ests$insert(est_insert)
+    
+  } else {
+    # if not a websever use local
+    out$est <- rows_update(out$est, est_row, by = c("area_code", "timestep"))
+  }
 
-   out$est <- rows_update(out$est, est_row, by = c("area_code", "timestep"))
+   
+   
 })
 
 
@@ -615,7 +685,7 @@ renderPlot({
       time_step = ts
     ) %>%
     group_by(year, time_step, area_code) %>%
-    summarize(predicted_retained_coho = sum(val, na.rm=T), groups = 'drop')
+    summarize(predicted_retained_coho = sum(val, na.rm=T), .groups = 'drop')
   
   fram %>%
     inner_join(ests) %>%
@@ -646,20 +716,62 @@ renderPlot({
 ### Saved Inputs
 ```{r, download_link}
 downloadLink("download", label = "Download csv")
-output$download <- downloadHandler(
-  filename = function() {
-    paste("coho_sport_harvest_est_", Sys.Date(), ".csv", sep="")
-  },
-  content = function(file) {
-    write_csv(out$est, file)
-  }
-)
+if (on_web_server){
+  output$download <- downloadHandler(
+    filename = function() {
+      paste("coho_sport_harvest_est_", Sys.Date(), ".csv", sep="")
+    },
+    content = function(file) {
+      write_csv(user_ests$find(), file)
+    }
+  )
+} else {
+  output$download <- downloadHandler(
+    filename = function() {
+      paste("coho_sport_harvest_est_", Sys.Date(), ".csv", sep="")
+    },
+    content = function(file) {
+      write_csv(out$est, file)
+    }
+  )
+}
+
 ```
 
 ```{r ests_table}
-renderTable({
-  out$est
-})
+if (on_web_server) {
+  # poll database
+  users_inputs <- reactivePoll(1000, session,
+                               
+                               # check if something changed
+                               checkFunc = function() {
+                                 
+                                 ests <- user_ests$find()
+                                 
+                                 
+                                 sum(ests$est, ests$wday_df, 
+                                     ests$wend_df, ests$wday_hpd, 
+                                     ests$wend_hpd)
+                               },
+                               valueFunc = function() {
+                                 # pull new data
+                                 user_ests$find()
+                               }
+                               
+                               
+  )
+  # display table from database
+  renderTable({
+    users_inputs()
+  })
+} else{
+  # otherwise display local
+  renderTable({
+    out$est
+  })
+}
+
+
 ```
 
 ```{css est_table}
