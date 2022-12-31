@@ -41,7 +41,7 @@ on_web_server = file.exists('/.dockerenv')
 if (on_web_server){
   # load mongo, connect
   library("mongolite")
-  user_ests <- mongo(collection='user_ests')
+  user_ests <- mongo(collection='user_ests', url='mongodb://mongo')
   
   # if saved dataframe doesn't exist yet populate it
   if (nrow(user_ests$find()) == 0) {
@@ -127,7 +127,7 @@ if (on_web_server){
 
 
 # regulations need to be split out with weekday and weekday days counted
-# for default inputs for days in upcomming fisheries fisheries
+# for default inputs for days in upcoming fisheries fisheries
 
 daily_regs <- regs %>%
   rowwise() %>%
@@ -162,7 +162,9 @@ recent_regs <- regs_day_type_count %>%
   slice_max(order_by = year, n = 1) %>%
   ungroup()
 
-
+reg_days <- daily_regs %>%
+  count(catch_area_code, year, time_step, day_type) %>%
+  pivot_wider(names_from = day_type, values_from =n)
 
 ```
 
@@ -273,7 +275,7 @@ observeEvent(
     user_ests$insert(est_insert)
     
   } else {
-    # if not a websever use local
+    # if not a webserver use local
     out$est <- rows_update(out$est, est_row, by = c("area_code", "timestep"))
   }
 
@@ -283,106 +285,6 @@ observeEvent(
 
 
 ```
-
-```{r estimates prep}
-# this chunk probably needs to be move to 
-# an estimate prep file
-
-# if taking the mean, 0's are important
-# crcs use the dumb 'if there's a 0 i'll not add row' 
-# strategy to their data... like it's the 70's and 
-# we're still entering data on punch cards
-# below is adding 0's back in to the means,
-# being mindful that if dataset is incomplete
-# to preserve NA's
-
-
-# this is specifically dealing with cases where there was no coho catch in 
-# entire fisheries  - nearly all time step 5/1
-fisheries_no_catch <- pssp %>%
-    filter(is.na(day_type)) %>%
-    select(area_code = catch_area_code, regulation_type_code, start_datetime, end_datetime, starts_with('coho')) %>%
-    mutate(
-      across(starts_with('coho'), ~replace_na(.x, 0))
-    ) %>%
-    rowwise() %>%
-    mutate(
-      date = list(seq(as.Date(start_datetime), as.Date(end_datetime), by = '1 day'))
-    ) %>%
-    unnest_longer(date) %>% # explode stratum
-    mutate(
-    day_type = if_else(lubridate::wday(date) %in% c(1,6,7), 'WE', 'WD'), # weekday / weekend
-    time_step = case_when(
-      lubridate::month(date) %in% c(1,2,3,4,5,6) ~ 1L,
-      lubridate::month(date)  == 7 ~ 2L,
-      lubridate::month(date)  == 8 ~ 3L,
-      lubridate::month(date)  == 9 ~ 4L,
-      lubridate::month(date) %in% c(10, 11, 12) ~ 5L
-      ),
-    year = lubridate::year(date),
-    source = 'CRC'
-  )
-
-# crc estimate cycles should be continuous up to 3/31 of the preceding management year
-# we shouldn't have regulations into the future (this is what this tool does)
-# to figure out the management year take the max year in the regulations
-# say 2022 - everything after 2022-03-31 should either be intensive monitoring estimates
-# or covered by crcs we don't have yet (NA)
-
-# figure out most recent management year
-# DO NOT PUT FUTURE DATES IN THE REGULATIONS FILE
-management_year <- max(regs_day_type_count$year)
-
-no_catch_no_estimate <- fisheries_no_catch %>%
-  mutate(
-    across(starts_with('coho'),
-           ~if_else(date >= as.Date(glue::glue('{management_year}-04-01')), NA_real_, .x)
-           )
-  )
-
-# this should be a list of fisheries where we don't have CRC estimates yet
-# no_catch_no_estimate %>%
-#   filter(is.na(coho_104_ad_ret)) %>%
-#   count(area_code, start_datetime, end_datetime)
-
-# this is a list of fisheries where the catch has been zero'd out (from CRC data)
-# no_catch_no_estimate %>%
-#   filter(!is.na(coho_104_ad_ret)) %>%
-#   count(area_code, start_datetime, end_datetime) %>%
-#   print(n=100)
-
-# remove fisheries where there were no catch from estimates (added back in later dailyfied)
-pssp <- pssp %>%
-  filter(!is.na(day_type)) %>%
-  mutate(date = as.Date(date)) %>%
-  bind_rows(no_catch_no_estimate) %>%
-  filter(year >= 2004) # crc weirdness with 2003
-
-# now means make sense
-
-# pre-process chart
-
-# fram_chart <- pssp |>
-#   group_by(year, time_step, area_code, source) |>
-#   summarize(across(starts_with('coho'), sum, na.rm=T), .groups = 'drop') |>
-#     rowwise() |>
-#     mutate(
-#       # apportion unk mark-status to ad/um for retention
-#       coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / sum(coho_104_ad_ret,coho_104_um_ret , na.rm=T))),
-#       coho_ad_k = replace_na(coho_104_ad_ret, 0),
-#       coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret /    sum(coho_104_ad_ret,coho_104_um_ret, na.rm=T))),
-#       coho_um_k = replace_na(coho_104_um_ret, 0),
-#       total_retained_coho = sum(coho_104_ad_ret, coho_104_um_ret),
-#       yr_type = paste0(year, '_pst_ests'),
-#       yr = as.character(year),
-#       ts = time_step,
-#       type = 'ests'
-#       ) |>
-#     select(yr_type, yr, ts, type, area_code, var = source, val = total_retained_coho)     |>
-#     bind_rows(fs_ps_spt)
-
-```
-
 
 
 ```{r filtered_objects}
@@ -414,25 +316,11 @@ recent_regs_at <- reactive({
          time_step == input$focal_ts)
 })
 
-
-# consider putting these filters in the reactive containers 
-pssp_at_reg <- reactive({
-  filter(pssp_at(), regulation_type_code %in% input$msf)
+regs_at <- reactive({
+  filter(reg_days, catch_area_code == input$focal_area, 
+         time_step == input$focal_ts)
 })
 
-fram_at_reg <- reactive({
-  fram_at() %>%
-    mutate(
-      selector = if_else(var == 'MSFQuota', 'MSF', 'NS') 
-    ) %>%
-    filter(
-         selector %in% input$msf
-         ) %>% select(-selector)
-}) 
-
-# pssp %>%
-#   group_by(day_type) %>%
-#   summarize(across(starts_with('coho'), mean, na.rm=T))
 
 ```
 
@@ -471,7 +359,7 @@ observeEvent(ignoreInit = TRUE,
 
   # catch a corner case, if user input doesn't have fisheries to
   # take a mean of, turn off the regulation filtering
-  if(nrow(pssp_at_reg()) == 0){
+  if(nrow(pssp_at()  %>% filter(regulation_type_code %in% input$msf)) == 0){
     showModal(modalDialog(
       title = 'No Usuable Data',
       'There are no previous data to calculate mean harvest by day. 
@@ -482,7 +370,8 @@ observeEvent(ignoreInit = TRUE,
     updateCheckboxGroupInput(inputId = 'years', selected = 2004:2022)
   } else {
     
-    mean_harvest <- pssp_at_reg() |>
+    mean_harvest <- pssp_at() |>
+      filter(regulation_type_code %in% input$msf) |>
       mutate(
         # take care of NA's
         across(starts_with('coho'), ~replace_na(.x, 0)),
@@ -586,7 +475,8 @@ Data {.tabset data-height=800}
 ### FRAM
 ```{r gg_fram}
 renderPlot({
-  fram_ests <- pssp_at_reg() |>
+  fram_ests <- pssp_at() |>
+    filter(regulation_type_code %in% input$msf) |>
     group_by(year, time_step, area_code, source) |>
     summarize(across(starts_with('coho'), sum, na.rm=T), .groups = 'drop') |>
     rowwise() |>
@@ -601,13 +491,23 @@ renderPlot({
       yr = as.character(year),
       ts = time_step,
       type = 'ests'
-      ) |>
+    ) |>
     select(yr_type, yr, ts, type, area_code, var = source, val = total_retained_coho)     |>
-    bind_rows(fram_at_reg())
+    bind_rows(
+      fram_at() %>%
+        mutate(
+          selector = if_else(var == 'MSFQuota', 'MSF', 'NS') 
+        ) %>%
+        filter(
+          selector %in% input$msf
+        ) %>% 
+        select(-selector) 
+    )
   
-
-
-  fram_ests |> ggplot(aes(yr_type, val, fill = var)) +
+  
+  
+  fram_ests %>%
+    ggplot(aes(yr_type, val, fill = var)) +
     geom_col(position = position_stack(), alpha = 0.7) +
     #geom_col(data = filter(fram_ests, type == "ests"), position = position_stack(), alpha = .6) +
     #geom_col(data = filter(fram_ests, type == "pst"), position = position_stack(), alpha = 1) +
@@ -618,46 +518,16 @@ renderPlot({
       "MSFQuota" = "#A4BADF",
       "CRC" = "#04a43c",
       "CREEL" = "#014218"
-      )) +
+    )) +
     labs(
       subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
     ) +
     theme(
       text = element_text(size = 20),
       axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
-      )
+    )
 })
 
-```
-
-### Daily Harvest
-```{r gg_daily}
-renderPlot({
-  day_plot <- pssp_at_reg() |>
-      mutate(
-        # take care of NA's
-        across(starts_with('coho'), ~replace_na(.x, 0)),
-        # apportion unk mark-status to ad/um for retention
-        coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / (coho_104_ad_ret + coho_104_um_ret ))),
-        coho_ad_k = replace_na(coho_104_ad_ret, 0),
-        coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret /  (coho_104_ad_ret + coho_104_um_ret ))),
-        coho_um_k = replace_na(coho_104_um_ret, 0),
-        total_retained_coho = coho_ad_k + coho_um_k
-      )
-  
-  day_plot |> 
-    ggplot(aes(factor(year), total_retained_coho, fill = day_type, fill = day_type )) +
-    geom_boxplot() +
-    labs(
-      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ",")),
-      y = 'Total Retained Coho',
-      x = 'Day Type'
-    ) + 
-    theme(
-      text = element_text(size = 20)
-      )
-    
-})
 ```
 
 ### FRAM Performance
@@ -681,24 +551,40 @@ renderPlot({
   
   fram <- fram_at() %>%
     mutate(
+      selector = if_else(var == 'MSFQuota', 'MSF', 'NS') 
+    ) %>%
+    filter(
+      selector %in% input$msf
+    ) %>% 
+    select(-selector) %>%
+    mutate(
       year = as.integer(yr),
       time_step = ts
     ) %>%
     group_by(year, time_step, area_code) %>%
     summarize(predicted_retained_coho = sum(val, na.rm=T), .groups = 'drop')
   
-  fram %>%
-    inner_join(ests) %>%
-  mutate(
-    percent = (total_retained_coho - predicted_retained_coho) / predicted_retained_coho,
-    type = percent < 0
-  ) %>%
+  plot <- fram %>%
+    inner_join(ests, by = c("year", "time_step", "area_code")) %>%
+    mutate(
+      percent = (total_retained_coho - predicted_retained_coho) / total_retained_coho,
+      ape = abs(percent),
+      type = percent < 0,
+      sq_dev = (total_retained_coho - predicted_retained_coho)^2,
+      
+    ) 
+  
+  rmse <- round(sqrt(plot$sq_dev))
+  mape <- round(mean(plot$ape), 2)
+  mpe <- round(mean(plot$percent), 2)
+  
+  plot %>%
     ggplot(aes(factor(year), percent, fill = type)) +
     geom_col(alpha = 0.8) +
     labs(
-      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ",")),
+      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","), 'RMSE: ', rmse, ' MAPE:', mape, 'MPE: ', mpe),
       x = NULL,
-      y = 'Percent Difference of Modeled Quota'
+      y = 'Percent Error'
     ) +
     scale_y_continuous(labels = scales::percent) +
     theme(
@@ -708,6 +594,49 @@ renderPlot({
     )
   
   
+})
+```
+
+
+### Daily Harvest
+```{r gg_daily}
+renderPlot({
+  day_plot <- pssp_at() |>
+    filter(regulation_type_code %in% input$msf) |>
+      mutate(
+        # take care of NA's
+        across(starts_with('coho'), ~replace_na(.x, 0)),
+        # apportion unk mark-status to ad/um for retention
+        coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / (coho_104_ad_ret + coho_104_um_ret ))),
+        coho_ad_k = replace_na(coho_104_ad_ret, 0),
+        coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret /  (coho_104_ad_ret + coho_104_um_ret ))),
+        coho_um_k = replace_na(coho_104_um_ret, 0),
+        total_retained_coho = coho_ad_k + coho_um_k
+      )
+  
+  day_plot |> 
+    ggplot(aes(factor(year), total_retained_coho, fill = day_type)) +
+    geom_boxplot() +
+    labs(
+      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ",")),
+      y = 'Total Retained Coho',
+      x = 'Day Type'
+    ) + 
+    theme(
+      text = element_text(size = 20)
+      )
+    
+})
+```
+
+
+### Historical Days Open
+```{r regs_table}
+renderTable({
+  regs_at() %>%
+    mutate(total_days = WE + WD) %>%
+    arrange(-year) %>%
+    mutate(year = as.character(year))
 })
 ```
 
@@ -780,6 +709,4 @@ if (on_web_server) {
     overflow-y: scroll;
     }
 ```
-
-
 

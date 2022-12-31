@@ -11,7 +11,7 @@ print('### Intestive creel ###')
 print('Loading daily intensive creel estimate file')
 intense_creel <- read_csv(here::here('data/sources/daily_coho_intensive.csv')) %>%
   janitor::clean_names() %>%
-  filter(area != '61') %>% # <-- Area 61 should be better covered by the coho directed estimats (A6)
+  filter(area != '61') %>% # <-- Area 61 should be better covered by the coho directed estimatws (A6)
   select(-x1, -study_code)
 
 print('Loading daily CRC estimate file')
@@ -89,8 +89,10 @@ if(nrow(dupes) > 0){
 print('Adding time steps and week day type columns prepping for db,
       this can take a few...')
 
-# helper function to test if a monday and lands on
-# major holidays
+# helper function to test if a monday lands on
+# major holiday - sampling program stratifies
+# this case as WE
+
 is_holiday_weekend <- function(date){
   if(lubridate::wday(date) == 2) { # test if f monday
     if(
@@ -109,6 +111,7 @@ is_holiday_weekend <- function(date){
   }
 }
 
+print('Adding parameters')
 # this is inefficient but works well enough
 daily_estimates <- daily_estimates %>%
   ungroup() %>%
@@ -124,12 +127,13 @@ daily_estimates <- daily_estimates %>%
   ) %>%
   rowwise() %>%
   mutate(
-    day_type = if_else(lubridate::wday(date) %in% c(2:5) & !is_holiday_weekend(date), 'WD', 'WE'),
+    day_type = if_else(
+      lubridate::wday(date) %in% c(2:5) & 
+        !is_holiday_weekend(date), 'WD', 'WE'), # if monday is a holiday = WE
     date = as.character(date)
   ) %>% select(area_code = area, everything())
 
-
-print('Removed extra environmental variables')
+print('Removing extra environmental variables')
 rm(list=c('crc', 'crc_est', 'crc_intense', 'dupes', 'intense_creel'))
 print('Done!')
 
