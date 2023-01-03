@@ -121,7 +121,6 @@ if (on_web_server){
   
   # disconnect from database
   DBI::dbDisconnect(con)
-
 }
 
 
