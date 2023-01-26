@@ -641,6 +641,52 @@ renderTable({
 
 
 
+### Mean Daily Harvest
+
+```{r mean_daily_harvest}
+
+renderPlot({
+  mean_harvest_plot <- pssp_at() |>
+    filter(regulation_type_code %in% input$msf) |>
+      mutate(
+        # take care of NA's
+        across(starts_with('coho'), ~replace_na(.x, 0)),
+        # apportion unk mark-status to ad/um for retention
+        coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / (coho_104_ad_ret + coho_104_um_ret ))),
+        coho_ad_k = replace_na(coho_104_ad_ret, 0),
+        coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret /  (coho_104_ad_ret + coho_104_um_ret ))),
+        coho_um_k = replace_na(coho_104_um_ret, 0),
+        total_retained_coho = coho_ad_k + coho_um_k
+      ) %>%
+    group_by(year, regulation_type_code) %>%
+    summarize(mean_est = mean(total_retained_coho, na.rm=T), .groups='drop')
+  
+  input_mean <- ((input$wend_df * input$wend_hpd) +  (input$wday_df * input$wday_hpd)) / (input$wday_df + input$wend_df)
+  
+  mean_harvest_plot |> 
+    ggplot(aes(factor(year), mean_est, fill = regulation_type_code, group=mean_est)) +
+    geom_col(position = position_dodge(), alpha=0.8) +
+    geom_hline( yintercept = input_mean) +
+    labs(
+      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ",")),
+      y = 'Mean Coho Harvest Per Day',
+      x = 'Year'
+    ) +
+    theme(
+      text = element_text(size = 20)
+      )
+    
+})
+
+
+#((input$wend_df * input$wend_hpd) +  (input$wday_df * input$wday_hpd)) / (input$wday_df + input$wend_df)
+
+
+
+
+```
+
+
 ### Saved Inputs
 ```{r, download_link}
 downloadLink("download", label = "Download csv")
