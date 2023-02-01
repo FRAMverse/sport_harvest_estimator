@@ -482,10 +482,10 @@ renderPlot({
     mutate(
       # apportion unk mark-status to ad/um for retention
       coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / sum(coho_104_ad_ret,coho_104_um_ret , na.rm=T))),
-      coho_ad_k = replace_na(coho_104_ad_ret, 0),
+      #coho_ad_k = replace_na(coho_104_ad_ret, 0),
       coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret / sum(coho_104_ad_ret,coho_104_um_ret, na.rm=T))),
-      coho_um_k = replace_na(coho_104_um_ret, 0),
-      total_retained_coho = sum(coho_104_ad_ret, coho_104_um_ret),
+      #coho_um_k = replace_na(coho_104_um_ret, 0),
+      total_retained_coho = sum(coho_ad_k, coho_um_k),
       yr_type = paste0(year, '_pst_ests'),
       yr = as.character(year),
       ts = time_step,
