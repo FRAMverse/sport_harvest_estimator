@@ -165,6 +165,7 @@ reg_days <- daily_regs %>%
   count(catch_area_code, year, time_step, day_type) %>%
   pivot_wider(names_from = day_type, values_from =n)
 
+
 ```
 
 About

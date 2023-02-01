@@ -1,6 +1,6 @@
 # this script populates a SQLite database based on 
 # a collection of R scripts
-
+library(tidyverse)
 # load and transform sources of data
 source(here::here('data_prep_scripts/coho_fram.R'))
 source(here::here('data_prep_scripts/coho_regulations.R'))
@@ -8,7 +8,7 @@ source(here::here('data_prep_scripts/coho_estimates.R'))
 
 
 # comments on the data associated with this update
-comment <- 'fisheries with no catch now zeros instead of NA'
+comment <- 'fixing regulation errors'
 
 # save to sqlite database
 con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
