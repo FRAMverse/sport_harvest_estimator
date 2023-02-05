@@ -80,14 +80,18 @@ pal_ts <- set_names(
 # this is on someone's personal computer 
 # and not on a web server this table needs
 # to be stored locally
-if (on_web_server == FALSE){
+if (on_web_server == FALSE) {
   out <- reactiveValues(
     est = expand_grid(
       area_code = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"),
       timestep = as.character(1:5),
       est = 0,
-      wday_df = 0, wend_df = 0,
-      wday_hpd = 0, wend_hpd = 0,
+      years = NA_character_,
+      reg = NA_character_,
+      wday_df = 0,
+      wend_df = 0,
+      wday_hpd = 0,
+      wend_hpd = 0,
       rationale = ""
     )
   )
@@ -255,7 +259,10 @@ observeEvent(
   est_row <- data.frame(
      area_code = input$focal_area,
      timestep = input$focal_ts,
+     
      est = wday_harvest()+wend_harvest(),
+     years = paste0(input$years, collapse = ','),
+     reg = paste0(input$msf, collapse = ','),
      wday_df = input$wday_df, wend_df = input$wend_df,
      wday_hpd = input$wday_hpd, wend_hpd = input$wend_hpd,
      rationale = input$rationale
@@ -367,7 +374,7 @@ observeEvent(ignoreInit = TRUE,
     )
     
     updateCheckboxGroupInput(inputId = 'msf', selected = c('NS', 'MSF'))
-    updateCheckboxGroupInput(inputId = 'years', selected = 2004:2022)
+    updateCheckboxGroupInput(inputId = 'years', selected = 2003:2022)
   } else {
     
     mean_harvest <- pssp_at() |>
@@ -382,8 +389,11 @@ observeEvent(ignoreInit = TRUE,
         coho_um_k = replace_na(coho_104_um_ret, 0),
         total_retained_coho = coho_ad_k + coho_um_k
       ) |>
+      group_by(year, time_step, area_code, day_type) %>%
+      summarize(total_retained_coho = sum(total_retained_coho), days = n(), .groups='drop') %>%
+      mutate(coho_per_day = total_retained_coho / days) %>%
       group_by(time_step, area_code, day_type) %>%
-      summarize(mean_daily_harvest = mean(total_retained_coho, na.rm=T), .groups = 'drop') %>%
+      summarize(mean_daily_harvest = mean(coho_per_day, na.rm=T), .groups = 'drop') %>%
       pivot_wider(names_from = day_type, values_from  = mean_daily_harvest) %>%
       ungroup()
 
@@ -462,10 +472,31 @@ Years {data-height=125}
 ### Year selection
 
 ```{r years_checkboxes}
+actionLink('select_all_years', 'Select All')
+actionLink('select_recent_years', 'Select Recent 5 years')
+
 checkboxGroupInput("years", "Focal years", inline = T, width = '100%',
                    choices = sort(unique(pssp$year)), 
                    selected = sort(unique(pssp$year))
                    )
+
+observeEvent(
+  ignoreInit = TRUE,
+  input$select_all_years,
+  {
+    updateCheckboxGroupInput(inputId = 'years', selected = 2003:2022)
+    
+    }
+)
+
+observeEvent(
+  ignoreInit = TRUE,
+  input$select_recent_years,
+  {
+    updateCheckboxGroupInput(inputId = 'years', selected = 2017:2022)
+    }
+)
+
 ```
 
 
