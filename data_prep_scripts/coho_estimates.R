@@ -11,7 +11,7 @@ print('### Intestive creel ###')
 print('Loading daily intensive creel estimate file')
 intense_creel <- read_csv(here::here('data/sources/daily_coho_intensive.csv')) %>%
   janitor::clean_names() %>%
-  filter(area != '61') %>% # <-- Area 61 should be better covered by the coho directed estimatws (A6)
+  filter(area != '61') %>% # <-- Area 61 should be better covered by the coho directed estimates (A6)
   select(-x1, -study_code)
 
 print('Loading daily CRC estimate file')
@@ -21,7 +21,7 @@ crc <- readxl::read_excel(
   col_types = c('text', 'numeric', 'text', 'text', 'text','text', 'date', 'numeric')) %>%
   janitor::clean_names() %>% # no dumb names
   filter(
-    !area %in% c('2-1', '2-2'), # no willipa bay
+    !area %in% c('2-1', '2-2', '22'), # no willipa bay
     species == 'Coho' # only want coho
   ) %>%
   mutate(
@@ -30,9 +30,25 @@ crc <- readxl::read_excel(
     area = str_pad(area, 2, 'left', '0') # catch area padding 5 -> 05 
   ) 
 
+print('Filling in missing days in CRCs with 0s')
+
+all_area_days <- expand_grid(
+  area = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"),
+  date = seq(as.Date('2002-01-01'), as.Date('2022-03-31'), by ='day'),
+  species = 'Coho',
+  fish = 0
+)
+
+missing_crc_days <- all_area_days %>%
+  anti_join(crc, by=c('area', 'date')) %>%
+  mutate(year = lubridate::year(date))
+
+crc_filled <- crc %>%
+  bind_rows(missing_crc_days)
+
 
 print('Cleaning a prepping CRC data')
-crc_est <- crc %>%
+crc_est <- crc_filled %>%
   mutate(
     species = tolower(species),
     mark = case_when(
@@ -134,7 +150,7 @@ daily_estimates <- daily_estimates %>%
   ) %>% select(area_code = area, everything())
 
 print('Removing extra environmental variables')
-rm(list=c('crc', 'crc_est', 'crc_intense', 'dupes', 'intense_creel'))
+rm(list=c('crc', 'crc_est', 'crc_intense', 'dupes', 'intense_creel', 'all_area_days', 'crc_filled', 'missing_crc_days'))
 print('Done!')
 
 # checks
