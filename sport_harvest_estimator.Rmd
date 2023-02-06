@@ -38,10 +38,10 @@ library("gt")
 
 on_web_server = file.exists('/.dockerenv')
 
-if (on_web_server){
+if (on_web_server) {
   # load mongo, connect
   library("mongolite")
-  user_ests <- mongo(collection='user_ests', url='mongodb://mongo')
+  user_ests <- mongo(collection = 'user_ests', url = 'mongodb://mongo')
   
   # if saved dataframe doesn't exist yet populate it
   if (nrow(user_ests$find()) == 0) {
@@ -49,9 +49,13 @@ if (on_web_server){
       expand_grid(
         area_code = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"),
         timestep = as.character(1:5),
-        est = 0, 
-        wday_df = 0, wend_df = 0,
-        wday_hpd = 0, wend_hpd = 0,
+        years = NA_character_,
+        reg = NA_character_,
+        est = 0,
+        wday_df = 0,
+        wend_df = 0,
+        wday_hpd = 0,
+        wend_hpd = 0,
         rationale = ""
       )
       
@@ -564,7 +568,6 @@ renderPlot({
 ### FRAM Performance
 
 ```{r fram_performance}
-
 renderPlot({
   ests <- pssp_at() %>%
     mutate(
@@ -660,19 +663,6 @@ renderPlot({
 })
 ```
 
-
-### Historical Days Open
-```{r regs_table}
-renderTable({
-  regs_at() %>%
-    mutate(total_days = WE + WD) %>%
-    arrange(-year) %>%
-    mutate(year = as.character(year))
-})
-```
-
-
-
 ### Mean Daily Harvest
 
 ```{r mean_daily_harvest}
@@ -718,6 +708,15 @@ renderPlot({
 
 ```
 
+### Historical Days Open
+```{r regs_table}
+renderTable({
+  regs_at() %>%
+    mutate(total_days = WE + WD) %>%
+    arrange(-year) %>%
+    mutate(year = as.character(year))
+})
+```
 
 ### Saved Inputs
 ```{r, download_link}
@@ -747,24 +746,27 @@ if (on_web_server){
 ```{r ests_table}
 if (on_web_server) {
   # poll database
-  users_inputs <- reactivePoll(1000, session,
-                               
-                               # check if something changed
-                               checkFunc = function() {
-                                 
-                                 ests <- user_ests$find()
-                                 
-                                 
-                                 sum(ests$est, ests$wday_df, 
-                                     ests$wend_df, ests$wday_hpd, 
-                                     ests$wend_hpd)
-                               },
-                               valueFunc = function() {
-                                 # pull new data
-                                 user_ests$find()
-                               }
-                               
-                               
+  users_inputs <- reactivePoll(
+    1000,
+    session,
+    
+    # check if something changed
+    checkFunc = function() {
+      ests <- user_ests$find()
+      
+      
+      sum(ests$est,
+          ests$wday_df,
+          ests$wend_df,
+          ests$wday_hpd,
+          ests$wend_hpd)
+    },
+    valueFunc = function() {
+      # pull new data
+      user_ests$find()
+    }
+    
+    
   )
   # display table from database
   renderTable({
@@ -785,5 +787,27 @@ if (on_web_server) {
   .chart-shim {
     overflow-y: scroll;
     }
+```
+
+<!-- ### Load Saved Inputs -->
+
+```{r load_inputs}
+# still working on this
+
+# renderUI({
+#   selectInput("area",label = "Area",
+#       choices =as.list(out$est %>%
+#                          filter(est > 0) %>%
+#                          .$area_code))
+# })
+# 
+# renderUI({
+#   selectInput("area",label = "Area",
+#       choices =as.list(out$est %>%
+#                          filter(est > 0) %>%
+#                          .$area_code))
+# })
+
+
 ```
 
