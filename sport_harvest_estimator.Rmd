@@ -645,8 +645,16 @@ renderTable({
 ### Mean Daily Harvest
 
 ```{r mean_daily_harvest}
+# renderText({
+#   
+# })
+# 
 
 renderPlot({
+  
+  
+  
+  
   mean_harvest_plot <- pssp_at() |>
     filter(regulation_type_code %in% input$msf) |>
       mutate(
