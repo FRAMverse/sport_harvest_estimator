@@ -49,8 +49,8 @@ if (on_web_server) {
       expand_grid(
         area_code = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"),
         timestep = as.character(1:5),
-        years = NA_character_,
-        reg = NA_character_,
+        years = "",
+        reg = "",
         est = 0,
         wday_df = 0,
         wend_df = 0,
@@ -90,8 +90,8 @@ if (on_web_server == FALSE) {
       area_code = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"),
       timestep = as.character(1:5),
       est = 0,
-      years = NA_character_,
-      reg = NA_character_,
+      years = "",
+      reg = "",
       wday_df = 0,
       wend_df = 0,
       wday_hpd = 0,
@@ -263,7 +263,6 @@ observeEvent(
   est_row <- data.frame(
      area_code = input$focal_area,
      timestep = input$focal_ts,
-     
      est = wday_harvest()+wend_harvest(),
      years = paste0(input$years, collapse = ','),
      reg = paste0(input$msf, collapse = ','),
