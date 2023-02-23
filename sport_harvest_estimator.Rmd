@@ -289,7 +289,8 @@ observeEvent(
     out$est <- rows_update(out$est, est_row, by = c("area_code", "timestep"))
   }
 
-   
+  updateTextInput(inputId = 'rationale', value = '')
+  showNotification('Input saved', type = 'message')
    
 })
 
