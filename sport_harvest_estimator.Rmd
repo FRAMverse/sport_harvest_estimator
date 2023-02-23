@@ -200,7 +200,7 @@ After reaching an acceptable input, the user enters a brief description of the r
 Coho kept
 ============================================
 
-Area-Timestep-Estimates {data-height=250}
+Area-Timestep-Estimates {data-height=300}
 --------------------------------------------
 
 ### Area & Timestep
@@ -737,7 +737,8 @@ renderPlot({
 ```{r fram_vs_historical}
 renderPlot({
   fram_ests <- pssp_all_years() |>
-    filter(regulation_type_code %in% input$msf) |>
+    filter(regulation_type_code %in% input$msf,
+           year >= 2010) |>
     group_by(year, time_step, area_code, source) |>
     summarize(across(starts_with('coho'), sum, na.rm=T), .groups = 'drop') |>
     rowwise() |>
@@ -760,7 +761,8 @@ renderPlot({
           selector = if_else(var == 'MSFQuota', 'MSF', 'NS') 
         ) %>%
         filter(
-          selector %in% input$msf
+          selector %in% input$msf,
+          yr >= 2010
         ) %>% 
         select(-selector) 
     )
