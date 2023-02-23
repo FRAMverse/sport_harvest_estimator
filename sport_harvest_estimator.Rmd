@@ -306,6 +306,7 @@ observeEvent(
 # pssp dataframe to the users input represented by pssp_at() 
 
 pssp_at <- reactive({
+  # no base period area 12 for july, add july to august
   filter(pssp, 
          area_code == input$focal_area,
          time_step == input$focal_ts, 
@@ -331,6 +332,21 @@ regs_at <- reactive({
          time_step == input$focal_ts)
 })
 
+# next year move some of these filters to the individual charts / whatever code
+# likely losing performance as-is
+pssp_all_years <- reactive({
+  filter(pssp, 
+         area_code == input$focal_area,
+         time_step == input$focal_ts
+  )
+})
+
+fram_all_years <- reactive({
+    filter(fs_ps_spt,
+         area_code == input$focal_area, 
+         ts == input$focal_ts
+    )
+}) 
 
 ```
 
@@ -397,20 +413,8 @@ observeEvent(ignoreInit = TRUE,
                    if (length(saved_years) == 0 | !setequal(saved_years, input$years) | !setequal(saved_regs, input$msf)) {
                      mean_harvest <- pssp_at() |>
                        filter(regulation_type_code %in% input$msf) |>
-                       mutate(
-                         # take care of NA's
-                         across(starts_with('coho'), ~ replace_na(.x, 0)),
-                         # apportion unk mark-status to ad/um for retention
-                         coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (
-                           coho_104_ad_ret / (coho_104_ad_ret + coho_104_um_ret)
-                         )),
-                         coho_ad_k = replace_na(coho_104_ad_ret, 0),
-                         coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (
-                           coho_104_um_ret /  (coho_104_ad_ret + coho_104_um_ret)
-                         )),
-                         coho_um_k = replace_na(coho_104_um_ret, 0),
-                         total_retained_coho = coho_ad_k + coho_um_k
-                       ) |>
+                       rowwise() %>%
+                       mutate(total_retained_coho = across(starts_with('coho'), sum)) |>
                        group_by(year, time_step, area_code, day_type) %>%
                        summarize(
                          total_retained_coho = sum(total_retained_coho),
@@ -457,20 +461,8 @@ observeEvent(ignoreInit = TRUE,
                  } else {
                    mean_harvest <- pssp_at() |>
                      filter(regulation_type_code %in% input$msf) |>
-                     mutate(
-                       # take care of NA's
-                       across(starts_with('coho'), ~ replace_na(.x, 0)),
-                       # apportion unk mark-status to ad/um for retention
-                       coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (
-                         coho_104_ad_ret / (coho_104_ad_ret + coho_104_um_ret)
-                       )),
-                       coho_ad_k = replace_na(coho_104_ad_ret, 0),
-                       coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (
-                         coho_104_um_ret /  (coho_104_ad_ret + coho_104_um_ret)
-                       )),
-                       coho_um_k = replace_na(coho_104_um_ret, 0),
-                       total_retained_coho = coho_ad_k + coho_um_k
-                     ) |>
+                     rowwise() %>%
+                     mutate(total_retained_coho = across(starts_with('coho'), sum)) |>
                      group_by(year, time_step, area_code, day_type) %>%
                      summarize(
                        total_retained_coho = sum(total_retained_coho),
@@ -651,7 +643,7 @@ Years {data-height=125}
 
 ```{r years_checkboxes}
 actionLink('select_all_years', 'Select All')
-actionLink('select_recent_years', 'Select Recent 5 years')
+actionLink('select_recent_years', 'Select Recent 6 years')
 
 checkboxGroupInput("years", "Focal years", inline = T, width = '100%',
                    choices = sort(unique(pssp$year)), 
@@ -739,8 +731,67 @@ renderPlot({
 
 ```
 
-### FRAM Performance
 
+### Input vs. Historical
+```{r fram_vs_historical}
+renderPlot({
+  fram_ests <- pssp_all_years() |>
+    filter(regulation_type_code %in% input$msf) |>
+    group_by(year, time_step, area_code, source) |>
+    summarize(across(starts_with('coho'), sum, na.rm=T), .groups = 'drop') |>
+    rowwise() |>
+    mutate(
+      # apportion unk mark-status to ad/um for retention
+      coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / sum(coho_104_ad_ret,coho_104_um_ret , na.rm=T))),
+      #coho_ad_k = replace_na(coho_104_ad_ret, 0),
+      coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret / sum(coho_104_ad_ret,coho_104_um_ret, na.rm=T))),
+      #coho_um_k = replace_na(coho_104_um_ret, 0),
+      total_retained_coho = sum(coho_ad_k, coho_um_k),
+      yr_type = paste0(year, '_pst_ests'),
+      yr = as.character(year),
+      ts = time_step,
+      type = 'ests'
+    ) |>
+    select(yr_type, yr, ts, type, area_code, var = source, val = total_retained_coho)     |>
+    bind_rows(
+      fram_all_years() %>%
+        mutate(
+          selector = if_else(var == 'MSFQuota', 'MSF', 'NS') 
+        ) %>%
+        filter(
+          selector %in% input$msf
+        ) %>% 
+        select(-selector) 
+    )
+  
+  
+  
+  fram_ests %>%
+    ggplot(aes(yr_type, val, fill = var)) +
+    geom_col(position = position_stack(), alpha = 0.7) +
+    #geom_col(data = filter(fram_ests, type == "ests"), position = position_stack(), alpha = .6) +
+    #geom_col(data = filter(fram_ests, type == "pst"), position = position_stack(), alpha = 1) +
+    geom_hline(yintercept = wday_harvest() + wend_harvest()) +
+    scale_y_continuous("FRAM inputs", sec.axis = dup_axis(), labels = scales::comma) +
+    scale_fill_manual(values = c(
+      "Quota" = "#D2A554",
+      "MSFQuota" = "#A4BADF",
+      "CRC" = "#04a43c",
+      "CREEL" = "#014218"
+    )) +
+    labs(
+      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
+    ) +
+    theme(
+      text = element_text(size = 20),
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+    )
+})
+
+```
+
+
+### FRAM Performance
 ```{r fram_performance}
 renderPlot({
   ests <- pssp_at() %>%
@@ -805,7 +856,6 @@ renderPlot({
 })
 ```
 
-
 ### Daily Harvest
 ```{r gg_daily}
 renderPlot({
@@ -847,23 +897,13 @@ renderPlot({
 
 renderPlot({
   
-  
-  
-  
   mean_harvest_plot <- pssp_at() |>
     filter(regulation_type_code %in% input$msf) |>
-      mutate(
-        # take care of NA's
-        across(starts_with('coho'), ~replace_na(.x, 0)),
-        # apportion unk mark-status to ad/um for retention
-        coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / (coho_104_ad_ret + coho_104_um_ret ))),
-        coho_ad_k = replace_na(coho_104_ad_ret, 0),
-        coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret /  (coho_104_ad_ret + coho_104_um_ret ))),
-        coho_um_k = replace_na(coho_104_um_ret, 0),
-        total_retained_coho = coho_ad_k + coho_um_k
-      ) %>%
-    group_by(year, regulation_type_code) %>%
-    summarize(mean_est = mean(total_retained_coho, na.rm=T), .groups='drop')
+    rowwise() %>%
+    mutate(total_retained_coho = coho_104_ad_ret + coho_104_um_ret + coho_104_uk_ret) |>
+    group_by(year, regulation_type_code) |>
+    summarize(mean_est = mean(total_retained_coho, na.rm = T),
+              .groups = 'drop')
   
   input_mean <- ((input$wend_df * input$wend_hpd) +  (input$wday_df * input$wday_hpd)) / (input$wday_df + input$wend_df)
   
