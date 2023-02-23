@@ -108,7 +108,7 @@ if (on_web_server == FALSE) {
 
 ```{r pull_data}
 # if on a web server pull data from a saved environment
-# if it's not, pull from the sqlite datbase
+# if it's not, pull from the sqlite database
 if (on_web_server){
   load(file = "sport_harvest_estimator.RData")
 } else {
@@ -131,7 +131,7 @@ if (on_web_server){
   DBI::dbDisconnect(con)
 }
 
-
+#rm(con)
 
 # regulations need to be split out with weekday and weekday days counted
 # for default inputs for days in upcoming fisheries fisheries
@@ -253,7 +253,6 @@ renderValueBox({
 
 textInput("rationale", label = "Rationale")
 actionButton("keep", label = "Keep estimates")
-
 
 ```
 
@@ -411,6 +410,9 @@ observeEvent(ignoreInit = TRUE,
                    
                    saved_regs <- strsplit(saved_regs, ",")[[1]]
                    
+                   saved_ration <- saved_input %>%
+                      .$rationale
+                   
                    if (length(saved_years) == 0 | !setequal(saved_years, input$years) | !setequal(saved_regs, input$msf)) {
                      mean_harvest <- pssp_at() |>
                        filter(regulation_type_code %in% input$msf) |>
@@ -456,6 +458,8 @@ observeEvent(ignoreInit = TRUE,
                      
                      updateCheckboxGroupInput(inputId = 'years', selected = as.numeric(saved_years))
                      updateCheckboxGroupInput(inputId = 'msf', selected = saved_regs)
+                     
+                     updateTextInput(inputId = 'rationale', value =  saved_ration)
                      
                    }
                    
@@ -537,6 +541,9 @@ observeEvent(ignoreInit = TRUE,
                  
                  saved_regs <- strsplit(saved_regs, ",")[[1]]
                  
+                 saved_ration <- saved_input %>%
+                 .$rationale
+                 
                  # if nothing as been saved
                  
                  if (length(saved_years) == 0) {
@@ -564,6 +571,8 @@ observeEvent(ignoreInit = TRUE,
                    
                    updateCheckboxGroupInput(inputId = 'years', selected = as.numeric(saved_years))
                    updateCheckboxGroupInput(inputId = 'msf', selected = saved_regs)
+                   
+                   updateTextInput(inputId = 'rationale', value =  saved_ration)
                    
                  }
                  
