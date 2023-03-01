@@ -600,7 +600,7 @@ observeEvent(ignoreInit = TRUE,
 ```
 
 
-Controls {data-height=200}
+Controls {data-height=225}
 --------------------------------------------
 
 ### Weekday assumptions
@@ -656,15 +656,15 @@ actionLink('select_all_years', 'Select All')
 actionLink('select_recent_years', 'Select Recent 6 years')
 
 checkboxGroupInput("years", "Focal years", inline = T, width = '100%',
-                   choices = sort(unique(pssp$year)), 
-                   selected = sort(unique(pssp$year))
+                   choices = 2004:2022,
+                   selected = 2004:2022# don't hardcode next year
                    )
 
 observeEvent(
   ignoreInit = TRUE,
   input$select_all_years,
   {
-    updateCheckboxGroupInput(inputId = 'years', selected = 2003:2022)
+    updateCheckboxGroupInput(inputId = 'years', selected = 2004:2022)
     
     }
 )

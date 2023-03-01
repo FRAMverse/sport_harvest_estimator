@@ -8,7 +8,7 @@ source(here::here('data_prep_scripts/coho_estimates.R'))
 
 
 # comments on the data associated with this update
-comment <- 'fix to area 5, was needlessly pulling in CRC data due to missing strata'
+comment <- 'fix to area 10, missing june 2018 opening'
 
 # save to sqlite database
 con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
