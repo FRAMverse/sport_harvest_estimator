@@ -15,7 +15,7 @@ output:
 runtime: shiny
 ---
 
-```{r setup, include=FALSE}
+```{r setup_libraries, include=FALSE}
 knitr::opts_chunk$set(comment = "#>", warning = F, echo = F)
 
 library("flexdashboard")
@@ -24,6 +24,49 @@ library("shiny")
 library("patchwork")
 library("gt")
 
+
+
+```
+
+```{r setup_db, include=FALSE}
+
+# this is checking if the application is in a container
+# (on the open internet) if it's not,
+# it won't connect to the mongo db for storing user inputs
+# pure web develop stuff has no influence on fish data
+
+
+on_web_server = file.exists('/.dockerenv')
+
+if (on_web_server) {
+  # load mongo, connect
+  library("mongolite")
+  user_ests <- mongo(collection = 'user_ests', url = 'mongodb://mongo')
+  
+  # if saved dataframe doesn't exist yet populate it
+  if (nrow(user_ests$find()) == 0) {
+    user_ests$insert(
+      expand_grid(
+        area_code = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"),
+        timestep = as.character(1:5),
+        years = "",
+        reg = "",
+        est = 0,
+        wday_df = 0,
+        wend_df = 0,
+        wday_hpd = 0,
+        wend_hpd = 0,
+        rationale = ""
+      )
+      
+    )
+  }
+}
+
+```
+
+
+```{r setup_theme, include=FALSE}
 theme_set(theme_light())
 
 pal_wkend <- c(wday = grey(0.3), wend = grey(0.8))
@@ -38,45 +81,98 @@ pal_ts <- set_names(
    paste(1:5, c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":")
 )
 
-
-out <- reactiveValues(
-  est = expand_grid(
-    area_code = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"),
-    timestep = as.character(1:5),
-    est = 0, 
-    wday_df = 0, wend_df = 0,
-    wday_apd = 0, wend_apd = 0,
-    wday_hapd = 0, wend_hapd = 0,
-    rationale = ""
+# this is on someone's personal computer 
+# and not on a web server this table needs
+# to be stored locally
+if (on_web_server == FALSE) {
+  out <- reactiveValues(
+    est = expand_grid(
+      area_code = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"),
+      timestep = as.character(1:5),
+      est = 0,
+      years = "",
+      reg = "",
+      wday_df = 0,
+      wend_df = 0,
+      wday_hpd = 0,
+      wend_hpd = 0,
+      rationale = ""
+    )
   )
-)
+}
+
+
+
 ```
 
 
 ```{r pull_data}
-# # connect to database
-con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
-# pull necessary tables and view
+# if on a web server pull data from a saved environment
+# if it's not, pull from the sqlite database
+if (on_web_server){
+  load(file = "sport_harvest_estimator.RData")
+} else {
+  # connect to database
+  con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
+  # pull necessary tables and view
+  
+  # puget sound creel information merged to regulation
+  pssp <- DBI::dbReadTable(con, 'vw_estimates_by_regulation')
+  
+  
+  # puget sound creel information merged to regulation
+  regs <- DBI::dbReadTable(con, 'coho_regulations')
+  
+  
+  # compilation of FRAM parameters from post-season and pre-season databases
+  fs_ps_spt <- DBI::dbReadTable(con, 'coho_fram')
+  
+  # disconnect from database
+  DBI::dbDisconnect(con)
+}
 
-# puget sound creel information merged to regulation
-pssp <- DBI::dbReadTable(con, 'vw_coho_dockside_regulation')
+#rm(con)
 
-# sample rates from RMIS catch sample tables
-rmis_cs <- DBI::dbReadTable(con, 'coho_sample_rate')
+# regulations need to be split out with weekday and weekday days counted
+# for default inputs for days in upcoming fisheries fisheries
 
-# compilation of FRAM parameters from post-season and pre-season databases
-fs_ps_spt <- DBI::dbReadTable(con, 'coho_fram')
+daily_regs <- regs %>%
+  rowwise() %>%
+  mutate(
+    date = list(seq(as.Date(start_datetime), as.Date(end_datetime), by = '1 day'))
+  ) %>%
+  unnest_longer(date) %>%
+  select(-start_datetime, -end_datetime) %>% # now a dataframe of daily dates by reg/area
+  mutate(
+    day_type = if_else(lubridate::wday(date) %in% c(1,6,7), 'WE', 'WD'), # weekday / weekend
+    time_step = case_when(
+      lubridate::month(date) %in% c(1,2,3,4,5,6) ~ 1L,
+      lubridate::month(date)  == 7 ~ 2L,
+      lubridate::month(date)  == 8 ~ 3L,
+      lubridate::month(date)  == 9 ~ 4L,
+      lubridate::month(date) %in% c(10, 11, 12) ~ 5L
+      ),
+    year = lubridate::year(date)
+  )
 
-# CRC estimates
-crc <- DBI::dbReadTable(con, 'coho_crc')
+# ugh, realized dates!!!!!!!!!!!!!!!!!!!!!!!!!!!! need planned/pamphlet!!!
+regs_day_type_count <- daily_regs %>%
+  count(catch_area_code, regulation_type_code, time_step, day_type, year) %>%
+  pivot_wider(names_from = 'day_type', values_from = n)
 
-# intensive monitoring / substituted with crc (hopefully)
-coho_ests <- DBI::dbReadTable(con, 'coho_estimates')
 
-# disconnect from database
-DBI::dbDisconnect(con)
+# this is selecting the most recent number of WD/WE days 
+# by area/timestep - defaults of the user interface
 
-#load(file = "sport_harvest_estimator.RData")
+recent_regs <- regs_day_type_count %>%
+  group_by(catch_area_code, time_step) %>%
+  slice_max(order_by = year, n = 1) %>%
+  ungroup()
+
+reg_days <- daily_regs %>%
+  count(catch_area_code, year, time_step, day_type) %>%
+  pivot_wider(names_from = day_type, values_from =n)
+
 
 ```
 
@@ -104,7 +200,7 @@ After reaching an acceptable input, the user enters a brief description of the r
 Coho kept
 ============================================
 
-Area-Timestep-Estimates {data-height=200}
+Area-Timestep-Estimates {data-height=300}
 --------------------------------------------
 
 ### Area & Timestep
@@ -118,27 +214,32 @@ radioButtons("focal_ts", label = "Focal Timestep",
              choiceNames = paste(1:5, c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":"), 
              selected = 4, inline = T, width = '100%')
 
+checkboxGroupInput("msf", label = "Regulation",
+             choices = c('NS', 'MSF'), 
+             selected = c('NS','MSF'), inline = T, width = '100%')
+
+
+
 ```
 
-### Anglers and harvest estimated
+### Harvest estimates
 
 ```{r valuebox}
 renderValueBox({
   valueBox(
-    value = paste0("Weekday: ", round(wday_anglers()), " anglers, ", round(wday_harvest()), " harvest"),
+    value = paste0("Weekday: ", round(wday_harvest()), " harvest"),
     icon = "fa-fish")
   })
 
 renderValueBox({
   valueBox(
-    value = paste0("Weekend: ", round(wend_anglers()), " anglers, ", round(wend_harvest()), " harvest"),
+    value = paste0("Weekend: ", round(wend_harvest()), " harvest"),
     icon = "fa-fish")
   })
 
 renderValueBox({
   valueBox(
     value = paste0("Total: ",
-                   round(wday_anglers()+wend_anglers()), " anglers, ",
                    round(wday_harvest()+wend_harvest()), " harvest"),
     icon = "fa-fish")
   })
@@ -148,101 +249,53 @@ renderValueBox({
 ### Output
 
 ```{r keep_dl_buttons}
-textInput("rationale", label = "Rationale")
 
+
+textInput("rationale", label = "Rationale")
 actionButton("keep", label = "Keep estimates")
 
-downloadButton("download", label = "Download csv")
-
 ```
 
-```{r keep_dl}
-reactive({
+```{r keeper, echo=F}
+observeEvent(
+  input$keep,{
   est_row <- data.frame(
-    area_code = input$focal_area,
-    timestep = input$focal_ts,
-    est = wday_harvest()+wend_harvest(),
-    wday_df = input$wday_df, wend_df = input$wend_df,
-    wday_apd = input$wday_apd, wend_apd = input$wend_apd,
-    wday_hapd = input$wday_hapd, wend_hapd = input$wend_hapd,
-    rationale = input$rationale
-    )
-
-  out$est <- rows_update(out$est, est_row, by = c("area_code", "timestep"))
-  }) |> 
-  bindEvent(input$keep)
-
-downloadHandler(
-  filename = function() {
-    paste("coho_sport_harvest_est_", Sys.Date(), ".csv", sep="")
-  },
-  content = function(file) {
-    write_csv(out$est, file)
+     area_code = input$focal_area,
+     timestep = input$focal_ts,
+     est = wday_harvest()+wend_harvest(),
+     years = paste0(input$years, collapse = ','),
+     reg = paste0(input$msf, collapse = ','),
+     wday_df = input$wday_df, wend_df = input$wend_df,
+     wday_hpd = input$wday_hpd, wend_hpd = input$wend_hpd,
+     rationale = input$rationale
+     )
+  
+  if (on_web_server){
+    # pull df out of mongo
+    est <- user_ests$find()
+    
+    # insert modified df
+    est_insert <- rows_update(est, est_row, by = c("area_code", "timestep"))
+    
+    #remove previous data
+    user_ests$remove('{}')
+    
+    #put new data in 
+    user_ests$insert(est_insert)
+    
+  } else {
+    # if not a webserver use local
+    out$est <- rows_update(out$est, est_row, by = c("area_code", "timestep"))
   }
-)
+
+  updateTextInput(inputId = 'rationale', value = '')
+  showNotification('Input saved', type = 'message')
+   
+})
+
 
 ```
 
-
-Controls {data-height=350}
---------------------------------------------
-
-### Weekday assumptions
-
-```{r wkday_sliders}
-numericInput("wday_df", label = "Weekday Days fished",
-            min = 0, max = 365, value = 20, step = 1, width = '100%')
-
-numericInput("wday_apd", label = "Weekday Anglers per day",
-            min = 0, max = 2000, value = 0, step = 5, width = '100%')
-
-numericInput("wday_hapd", label = "Weekday Harvest per angler per day",
-            min = 0, max = 4, value = 0, step = 0.01, width = '100%')
-
-wday_harvest <- reactive({
-  input$wday_df * input$wday_apd * input$wday_hapd
-})
-
-wday_anglers <- reactive({
-  input$wday_df * input$wday_apd
-})
-
-```
-
-### Weekend assumptions
-
-```{r wkend_sliders}
-numericInput("wend_df", label = "Weekend Days fished",
-            min = 0, max = 365, value = 10, step = 1, width = '100%')
-
-numericInput("wend_apd", label = "Weekend Anglers per day",
-            min = 0, max = 2000, value = 0, step = 5,  width = '100%')
-
-numericInput("wend_hapd", label = "Weekend Harvest per angler per day",
-            min = 0, max = 4, value = 0, step = 0.01,  width = '100%')
-
-wend_harvest <- reactive({
-  input$wend_df * input$wend_apd * input$wend_hapd
-})
-
-wend_anglers <- reactive({
-  input$wend_df * input$wend_apd
-})
-
-```
-
-
-Years {data-height=100}
---------------------------------------------
-
-### Year selection
-
-```{r years_checkboxes}
-checkboxGroupInput("years", "Focal years", inline = T, width = '100%',
-                   choices = sort(unique(pssp$year)), 
-                   selected = sort(unique(pssp$year))
-                   )
-```
 
 ```{r filtered_objects}
 # these block of code will make dataframes reactive objects.
@@ -253,225 +306,422 @@ checkboxGroupInput("years", "Focal years", inline = T, width = '100%',
 # pssp dataframe to the users input represented by pssp_at() 
 
 pssp_at <- reactive({
-  filter(pssp, area_code == input$focal_area, time_step == input$focal_ts, yr %in% input$years)
+  # no base period area 12 for july, add july to august
+  filter(pssp, 
+         area_code == input$focal_area,
+         time_step == input$focal_ts, 
+         year %in% input$years)
 })
 
-rmis_cs_at <- reactive({
-  filter(rmis_cs, area_code == input$focal_area, ts == input$focal_ts, yr %in% input$years)
-}) 
-
-crc_at <- reactive({
-  filter(crc, area_code == input$focal_area, ts == input$focal_ts)
-}) 
-
 fram_at <- reactive({
-  filter(fs_ps_spt, area_code == input$focal_area, ts == input$focal_ts)
+    filter(fs_ps_spt,
+         area_code == input$focal_area, 
+         ts == input$focal_ts, 
+         yr %in% input$years
+    )
 }) 
 
-ests_at <- reactive({
-  filter(coho_ests, area_code == input$focal_area, time_step == input$focal_ts)
+recent_regs_at <- reactive({
+  filter(recent_regs,
+         catch_area_code == input$focal_area, 
+         time_step == input$focal_ts)
+})
+
+regs_at <- reactive({
+  filter(reg_days, catch_area_code == input$focal_area, 
+         time_step == input$focal_ts)
+})
+
+# next year move some of these filters to the individual charts / whatever code
+# likely losing performance as-is
+pssp_all_years <- reactive({
+  filter(pssp, 
+         area_code == input$focal_area,
+         time_step == input$focal_ts
+  )
+})
+
+fram_all_years <- reactive({
+    filter(fs_ps_spt,
+         area_code == input$focal_area, 
+         ts == input$focal_ts
+    )
+}) 
+
+```
+
+
+
+```{r default_controls}
+# these are the controls for the defaults for the weekday and weekend
+# inputs. the days are pulled from the most recent fishery by area/timestep
+# harvest is the mean selected from the year checkboxes
+
+
+# application supplied harvest per day
+observeEvent(ignoreInit = TRUE,
+             c(input$focal_area,
+               input$focal_ts,
+               input$years,
+               input$msf),
+             {
+               # catch a corner case, if user input doesn't have fisheries to
+               # take a mean of, turn off the regulation filtering
+               if (nrow(pssp_at()  %>% filter(regulation_type_code %in% input$msf)) == 0) {
+                 showModal(
+                   modalDialog(
+                     title = 'No Usuable Data',
+                     'There are no previous data to calculate mean harvest by day.
+      Defaulting to whatever data available'
+                   )
+                 )
+                 
+                 updateCheckboxGroupInput(inputId = 'msf', selected = c('NS', 'MSF'))
+                 updateCheckboxGroupInput(inputId = 'years', selected = 2003:2022)
+               } else {
+                 if (on_web_server) {
+                   saved_input <- user_ests$find(
+                     glue::glue(
+                       '{"area_code": "{{input$focal_area}}", "timestep": "{{input$focal_ts}}"}',
+                       .open = "{{",
+                       .close = "}}"
+                     )
+                   )
+                   
+                   saved_wday <- saved_input %>%
+                     .$wday_df
+                   
+                   saved_wend <- saved_input %>%
+                     .$wend_df
+                   
+                   saved_wday_h <- saved_input %>%
+                     .$wday_hpd
+                   
+                   saved_wend_h <- saved_input %>%
+                     .$wend_hpd
+                   
+                   saved_years <- saved_input %>%
+                     .$years
+                   
+                   saved_years <- strsplit(saved_years, ",")[[1]]
+                   
+                   saved_regs <- saved_input %>%
+                     .$reg
+                   
+                   saved_regs <- strsplit(saved_regs, ",")[[1]]
+                   
+                   saved_ration <- saved_input %>%
+                      .$rationale
+                   
+                   if (length(saved_years) == 0 | !setequal(saved_years, input$years) | !setequal(saved_regs, input$msf)) {
+                     mean_harvest <- pssp_at() |>
+                       filter(regulation_type_code %in% input$msf) |>
+                       rowwise() %>%
+                       mutate(total_retained_coho = across(starts_with('coho'), sum)) |>
+                       group_by(year, time_step, area_code, day_type) %>%
+                       summarize(
+                         total_retained_coho = sum(total_retained_coho),
+                         days = n(),
+                         .groups = 'drop'
+                       ) %>%
+                       mutate(coho_per_day = total_retained_coho / days) %>%
+                       group_by(time_step, area_code, day_type) %>%
+                       summarize(mean_daily_harvest = mean(coho_per_day, na.rm = T),
+                                 .groups = 'drop') %>%
+                       pivot_wider(names_from = day_type, values_from  = mean_daily_harvest) %>%
+                       ungroup()
+                     
+                     
+                     
+                     
+                     wd_mean_harvest <- mean_harvest %>%
+                       .$WD
+                     
+                     we_mean_harvest <- mean_harvest %>%
+                       .$WE
+                     
+                     updateNumericInput(inputId = 'wend_hpd',
+                                        value = round(we_mean_harvest))
+                     
+                     updateNumericInput(inputId = 'wday_hpd',
+                                        value = round(wd_mean_harvest))
+                     
+                   } else{
+                     
+                     updateNumericInput(inputId = 'wday_df', value = saved_wday)
+                     updateNumericInput(inputId = 'wend_df', value = saved_wend)
+                     
+                     
+                     updateNumericInput(inputId = 'wend_hpd', value = saved_wend_h)
+                     updateNumericInput(inputId = 'wday_hpd', value = saved_wday_h)
+                     
+                     
+                     updateCheckboxGroupInput(inputId = 'years', selected = as.numeric(saved_years))
+                     updateCheckboxGroupInput(inputId = 'msf', selected = saved_regs)
+                     
+                     updateTextInput(inputId = 'rationale', value =  saved_ration)
+                     
+                   }
+                   
+                 } else {
+                   mean_harvest <- pssp_at() |>
+                     filter(regulation_type_code %in% input$msf) |>
+                     rowwise() %>%
+                     mutate(total_retained_coho = across(starts_with('coho'), sum)) |>
+                     group_by(year, time_step, area_code, day_type) %>%
+                     summarize(
+                       total_retained_coho = sum(total_retained_coho),
+                       days = n(),
+                       .groups = 'drop'
+                     ) %>%
+                     mutate(coho_per_day = total_retained_coho / days) %>%
+                     group_by(time_step, area_code, day_type) %>%
+                     summarize(mean_daily_harvest = mean(coho_per_day, na.rm = T),
+                               .groups = 'drop') %>%
+                     pivot_wider(names_from = day_type, values_from  = mean_daily_harvest) %>%
+                     ungroup()
+                   
+                   
+                   
+                   
+                   wd_mean_harvest <- mean_harvest %>%
+                     .$WD
+                   
+                   we_mean_harvest <- mean_harvest %>%
+                     .$WE
+                   
+                   updateNumericInput(inputId = 'wend_hpd', value = round(we_mean_harvest))
+                   
+                   updateNumericInput(inputId = 'wday_hpd', value = round(wd_mean_harvest))
+                   
+                   
+                 }
+                 
+               }
+               
+             })
+
+
+
+# application supplied weekend/weekdays
+observeEvent(ignoreInit = TRUE,
+             c(input$focal_area, input$focal_ts), {
+
+               
+               # pull from database if there is a data saved
+               if (on_web_server) {
+                 saved_input <- user_ests$find(
+                   glue::glue(
+                     '{"area_code": "{{input$focal_area}}", "timestep": "{{input$focal_ts}}"}',
+                     .open = "{{",
+                     .close = "}}"
+                   )
+                 )
+                 
+                 
+                 saved_wday <- saved_input %>%
+                   .$wday_df
+                 
+                 saved_wend <- saved_input %>%
+                   .$wend_df
+                 
+                 saved_wday_h <- saved_input %>%
+                   .$wday_hpd
+                 
+                 saved_wend_h <- saved_input %>%
+                   .$wend_hpd
+                 
+                 saved_years <- saved_input %>%
+                   .$years
+                 
+                 saved_years <- strsplit(saved_years, ",")[[1]]
+                 
+                 saved_regs <- saved_input %>%
+                   .$reg
+                 
+                 saved_regs <- strsplit(saved_regs, ",")[[1]]
+                 
+                 saved_ration <- saved_input %>%
+                 .$rationale
+                 
+                 # if nothing as been saved
+                 
+                 if (length(saved_years) == 0) {
+                   wd_days <- recent_regs_at() %>%
+                     # calculate most recent regulation weedays
+                     .$WD
+                   
+                   updateNumericInput(inputId = 'wday_df', value = wd_days)
+                   
+                   
+                   we_days <- recent_regs_at() %>%
+                     .$WE
+                   
+                   updateNumericInput(inputId = 'wend_df', value = we_days)
+                   
+                 } else {
+                   # set days from database
+                   updateNumericInput(inputId = 'wday_df', value = saved_wday)
+                   updateNumericInput(inputId = 'wend_df', value = saved_wend)
+                   
+                   
+                   updateNumericInput(inputId = 'wend_hpd', value = saved_wend_h)
+                   updateNumericInput(inputId = 'wday_hpd', value = saved_wday_h)
+                   
+                   
+                   updateCheckboxGroupInput(inputId = 'years', selected = as.numeric(saved_years))
+                   updateCheckboxGroupInput(inputId = 'msf', selected = saved_regs)
+                   
+                   updateTextInput(inputId = 'rationale', value =  saved_ration)
+                   
+                 }
+                 
+                 
+                 
+               } else {
+                 wd_days <- recent_regs_at() %>%
+                   # calculate most recent regulation weekdays
+                   .$WD
+                 
+                 updateNumericInput(inputId = 'wday_df', value = wd_days)
+                 
+                 
+                 we_days <- recent_regs_at() %>%
+                   .$WE
+                 
+                 updateNumericInput(inputId = 'wend_df', value = we_days)
+               }
+})
+
+
+
+
+
+```
+
+
+Controls {data-height=200}
+--------------------------------------------
+
+### Weekday assumptions
+```{r wkday_sliders}
+
+
+
+numericInput("wday_df", label = "Weekday Days fished",
+            min = 0, max = 365, value = 20, step = 1, width = '100%')
+
+# numericInput("wday_apd", label = "Weekday Anglers per day",
+#             min = 0, max = 2000, value = 0, step = 5, width = '100%')
+
+numericInput("wday_hpd", label = "Mean Weekday Day Harvest",
+            min = 0, max = 4, value = 0, step = 0.01, width = '100%')
+
+wday_harvest <- reactive({
+  input$wday_df * input$wday_hpd
+})
+
+```
+
+### Weekend assumptions
+
+```{r wkend_sliders}
+numericInput("wend_df", label = "Weekend Days fished",
+            min = 0, max = 365, value = 20, step = 1, width = '100%')
+
+# numericInput("wend_apd", label = "Weekend Anglers per day",
+#             min = 0, max = 2000, value = 0, step = 5,  width = '100%')
+
+numericInput("wend_hpd", label = "Mean Weekend Day Harvest",
+            min = 0, max = 4, value = 0, step = 0.01,  width = '100%')
+
+wend_harvest <- reactive({
+  input$wend_df * input$wend_hpd
 })
 
 
 ```
+
+
+
+
+
+Years {data-height=125}
+--------------------------------------------
+
+### Year selection
+
+```{r years_checkboxes}
+actionLink('select_all_years', 'Select All')
+actionLink('select_recent_years', 'Select Recent 6 years')
+
+checkboxGroupInput("years", "Focal years", inline = T, width = '100%',
+                   choices = sort(unique(pssp$year)), 
+                   selected = sort(unique(pssp$year))
+                   )
+
+observeEvent(
+  ignoreInit = TRUE,
+  input$select_all_years,
+  {
+    updateCheckboxGroupInput(inputId = 'years', selected = 2003:2022)
+    
+    }
+)
+
+observeEvent(
+  ignoreInit = TRUE,
+  input$select_recent_years,
+  {
+    updateCheckboxGroupInput(inputId = 'years', selected = 2017:2022)
+    }
+)
+
+```
+
 
 Data {.tabset data-height=800}
 --------------------------------------------
 
-### PSSP effort obs (data from *mvw_dockside_salmon*, refreshed Nov 22, 2022)
-
-```{r gt_anglers}
-gt::render_gt({
-  sample_rate_median <- if_else(nrow(rmis_cs_at()) > 0, median(rmis_cs_at()$sample_rate), NA_real_)
-  pssp_at_gt <- pssp_at() |> 
-    group_by(area_code, yr, week_day_type) |>
-    summarise(
-      n_obs = n(),
-      across(
-        c(anglers),
-        list(
-          q50 = ~round(quantile(., 0.5, na.rm=T), 0),
-          mu = ~round(mean(., na.rm=T), 0),
-          q95 = ~round(quantile(., 0.95, na.rm=T), 0)
-        ),
-        .names = "{.fn}"), .groups = "drop") |>
-    pivot_wider(names_from = week_day_type, values_from = c(n_obs, q50, mu, q95)) |> 
-    arrange(desc(yr)) |>
-    left_join(
-      rmis_cs_at() |> select(area_code, yr, sample_rate),
-      by = c("area_code", "yr")
-    ) |> 
-    mutate(
-      # this effectively imputes the sample rate
-      sample_rate = if_else(is.na(sample_rate), sample_rate_median, sample_rate),
-      across(
-        q50_wkday:q95_wkend,
-        list(expnd = ~round(replace_na(.,0) / sample_rate, 0))
-      )
-    ) |> 
-    select(area_code, yr, contains("wkday"), contains("wkend"))
-  
-  gt::gt(data = pssp_at_gt) |> 
-    gt::cols_hide(area_code) |> 
-    gt::tab_spanner("Weekday sampled", columns = ends_with("wkday")) |> 
-    gt::tab_spanner("Weekday expanded", columns = ends_with("wkday_expnd")) |> 
-    gt::tab_spanner("Weekend sampled", columns = ends_with("wkend")) |> 
-    gt::tab_spanner("Weekend expanded", columns = ends_with("wkend_expnd")) |> 
-    gt::tab_header(
-      title = paste("Sampled and expanded anglers/day in Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
-      ) |> 
-    gt::tab_style(
-      style = cell_fill("#D3D3D3"),
-      locations = cells_body(columns = c("q50_wkday_expnd", "q50_wkend_expnd"))
-    ) |> 
-    gt::tab_style(
-      style = cell_fill("#FFC46B"),
-      locations = cells_body(
-        columns = n_obs_wkday:q95_wkday_expnd,
-        rows = is.na(n_obs_wkday) | n_obs_wkday <= 5
-        )
-    ) |> 
-    gt::tab_style(
-      style = cell_fill("#FFC46B"),
-      locations = cells_body(
-        columns = n_obs_wkend:q95_wkend_expnd,
-        rows = is.na(n_obs_wkend) | n_obs_wkend <= 5
-      )
-    ) |> 
-    gt::summary_rows(
-      columns = ends_with("_expnd"),
-      fns = list(
-        min = ~min(.),
-        med = ~median(.),
-        mean = ~mean(.),
-        max = ~max(.)
-      ),
-      formatter = fmt_number
-    ) |> 
-    gt::tab_options(
-      table.width = "100%"
-    )
-  })
-```
-
-### PSSP kept obs (data from *mvw_dockside_salmon*, refreshed Nov 22, 2022)
-
-```{r gg_kpa}
-renderPlot({
-  pssp_at_q <- bind_rows(
-    pssp_at() |>  
-      pivot_longer(names_to = "kpa_type",
-                   values_to = "kpa", 
-                   cols = c(coho_kept_per_angler, coho_kept_ad_per_angler)) |> 
-      group_by(area_code, yr, week_day_type, kpa_type) |>
-      summarise(
-        n_obs = n(),
-        across(kpa,
-               list(
-                 q05 = ~round(quantile(., 0.05, na.rm=T), 2),
-                 q25 = ~round(quantile(., 0.25, na.rm=T), 2),
-                 q50 = ~round(quantile(., 0.5, na.rm=T), 2),
-                 q75 = ~round(quantile(., 0.75, na.rm=T), 2),
-                 q95 = ~round(quantile(., 0.95, na.rm=T), 2),
-                 mu = ~round(mean(., na.rm=T), 2)
-               ),
-               .names = "{.fn}"), .groups = "drop") |>
-      arrange(desc(yr))
-    ,
-    pssp_at() |>  
-      pivot_longer(names_to = "kpa_type",
-                   values_to = "kpa", 
-                   cols = c(coho_kept_per_angler, coho_kept_ad_per_angler))|> 
-      group_by(area_code, week_day_type, kpa_type) |>
-      summarise(
-        yr = "pooled",
-        n_obs = n(),
-        across(kpa,
-               list(
-                 q05 = ~round(quantile(., 0.05, na.rm=T), 2),
-                 q25 = ~round(quantile(., 0.25, na.rm=T), 2),
-                 q50 = ~round(quantile(., 0.5, na.rm=T), 2),
-                 q75 = ~round(quantile(., 0.75, na.rm=T), 2),
-                 q95 = ~round(quantile(., 0.95, na.rm=T), 2),
-                 mu = ~round(mean(., na.rm=T), 2)
-               ),
-               .names = "{.fn}"), .groups = "drop")
-  )
-  
-  pssp_at_q |> 
-    ggplot(aes(x = yr, y = mu, color = kpa_type, group = kpa_type)) +
-    coord_flip() +
-    geom_linerange(aes(ymin = q05, ymax = q95), position = position_dodge(width = 0.4)) +
-    geom_pointrange(aes(ymin = q25, ymax = q75), size = 1.1, position = position_dodge(width = 0.4)) +
-    geom_point(aes(x = yr, y = mu), shape = 4, size = 6, position = position_dodge(width = 0.4)) +
-    geom_text(aes(x = yr, y = 0, label = n_obs), nudge_y = -0.05) +
-    geom_text(aes(x = yr, y = q05, label = q05), position = position_dodge(width = 1.1)) +
-    #geom_text(aes(x = yr, y = q50, label = q50), position = position_dodge(width = 1.3)) +
-    geom_text(aes(x = yr, y = mu, label = mu), position = position_dodge(width = 1.5)) +
-    geom_text(aes(x = yr, y = q95, label = q95), position = position_dodge(width = 1.1)) +
-    geom_hline(
-      data = tibble(
-        week_day_type = c("wkday", "wkend"), 
-        yint = c(input$wday_hapd, input$wend_hapd)
-        ),
-      aes(yintercept = yint), size = 1.7, color = pal_wkend) +
-    facet_wrap(~week_day_type, scales = "free_x") +
-    scale_x_discrete("") +
-    scale_y_continuous("Coho kept per angler per day") +
-    scale_color_manual(values = c("coho_kept_per_angler" = "#D2A554", "coho_kept_ad_per_angler" = "#A4BADF")) +
-    labs(
-      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
-      ) +
-    theme(
-      text = element_text(size = 20),
-      legend.position = "bottom"
-      )
-})
-
-
-
-
-
-```
-
 ### FRAM
-
 ```{r gg_fram}
 renderPlot({
-  
-  # fs_ps_spt_test <- fs_ps_spt |>
-  #   filter(area_code == '12', ts == 4, yr >= 2009)
-  # 
-  # coho_ests_test <- coho_ests |>
-  #   filter(area_code == '12', time_step == 4, year >= 2009)
-
-
-  fram_ests <- ests_at() |>
+  fram_ests <- pssp_at() |>
+    filter(regulation_type_code %in% input$msf) |>
+    group_by(year, time_step, area_code, source) |>
+    summarize(across(starts_with('coho'), sum, na.rm=T), .groups = 'drop') |>
     rowwise() |>
     mutate(
       # apportion unk mark-status to ad/um for retention
-      coho_ad_k = coho_ad_k + (coho_unk_k * (coho_ad_k / sum(coho_ad_k,coho_um_k, na.rm=T))),
-      coho_ad_k = replace_na(coho_ad_k, 0),
-      coho_um_k = coho_um_k + (coho_unk_k * (coho_um_k / sum(coho_ad_k,coho_um_k, na.rm=T))),
-      coho_um_k = replace_na(coho_um_k, 0),
-      total_retained_coho = sum(coho_ad_k, coho_um_k)
-    ) |>
-    group_by(year, time_step, area_code, source) |>
-    summarize(across(c(coho_ad_k, coho_um_k, total_retained_coho), sum, na.rm=T), .groups = 'drop') |>
-    mutate(
+      coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / sum(coho_104_ad_ret,coho_104_um_ret , na.rm=T))),
+      #coho_ad_k = replace_na(coho_104_ad_ret, 0),
+      coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret / sum(coho_104_ad_ret,coho_104_um_ret, na.rm=T))),
+      #coho_um_k = replace_na(coho_104_um_ret, 0),
+      total_retained_coho = sum(coho_ad_k, coho_um_k),
       yr_type = paste0(year, '_pst_ests'),
       yr = as.character(year),
       ts = time_step,
       type = 'ests'
-      ) |>
+    ) |>
     select(yr_type, yr, ts, type, area_code, var = source, val = total_retained_coho)     |>
-    bind_rows(fram_at())
-
-
-  fram_ests |> ggplot(aes(yr_type, val, fill = var)) +
+    bind_rows(
+      fram_at() %>%
+        mutate(
+          selector = if_else(var == 'MSFQuota', 'MSF', 'NS') 
+        ) %>%
+        filter(
+          selector %in% input$msf
+        ) %>% 
+        select(-selector) 
+    )
+  
+  
+  
+  fram_ests %>%
+    ggplot(aes(yr_type, val, fill = var)) +
     geom_col(position = position_stack(), alpha = 0.7) +
-      geom_col(data = filter(fram_ests, type == "ests"), position = position_stack(), alpha = .6) +
-    geom_col(data = filter(fram_ests, type == "pst"), position = position_stack(), alpha = 1) +
+    #geom_col(data = filter(fram_ests, type == "ests"), position = position_stack(), alpha = .6) +
+    #geom_col(data = filter(fram_ests, type == "pst"), position = position_stack(), alpha = 1) +
     geom_hline(yintercept = wday_harvest() + wend_harvest()) +
     scale_y_continuous("FRAM inputs", sec.axis = dup_axis(), labels = scales::comma) +
     scale_fill_manual(values = c(
@@ -479,57 +729,319 @@ renderPlot({
       "MSFQuota" = "#A4BADF",
       "CRC" = "#04a43c",
       "CREEL" = "#014218"
-      )) +
+    )) +
     labs(
       subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
     ) +
     theme(
       text = element_text(size = 20),
       axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
-      )
-#--------------------------------------------------------------  
-#   fram_at() |> 
-#     ggplot(aes(yr_type, val, fill = var)) + 
-#     geom_col(position = position_stack(), alpha = 0.7) + 
-#     geom_col(data = filter(fram_at(), type == "pst"), position = position_stack(), alpha = 1) + 
-#     geom_hline(yintercept = wday_harvest() + wend_harvest()) +
-#     scale_y_continuous("FRAM inputs", sec.axis = dup_axis(), labels = scales::comma) +
-#     scale_fill_manual(values = c("Quota" = "#D2A554", "MSFQuota" = "#A4BADF")) +
-#     labs(
-#       subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
-#     ) +
-#     theme(
-#       text = element_text(size = 20),
-#       axis.text.x=element_text(angle=90,hjust=1)
-#       )
+    )
 })
-
 
 ```
 
-### CRC estimates
 
-```{r gg_crc}
+### Input vs. Historical
+```{r fram_vs_historical}
 renderPlot({
-  crc_at() |> 
-    ggplot(aes(yr, catchest, fill = m)) + 
-    geom_col(position = position_stack()) + 
+  fram_ests <- pssp_all_years() |>
+    filter(regulation_type_code %in% input$msf,
+           year >= 2010) |>
+    group_by(year, time_step, area_code, source) |>
+    summarize(across(starts_with('coho'), sum, na.rm=T), .groups = 'drop') |>
+    rowwise() |>
+    mutate(
+      # apportion unk mark-status to ad/um for retention
+      coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / sum(coho_104_ad_ret,coho_104_um_ret , na.rm=T))),
+      #coho_ad_k = replace_na(coho_104_ad_ret, 0),
+      coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret / sum(coho_104_ad_ret,coho_104_um_ret, na.rm=T))),
+      #coho_um_k = replace_na(coho_104_um_ret, 0),
+      total_retained_coho = sum(coho_ad_k, coho_um_k),
+      yr_type = paste0(year, '_pst_ests'),
+      yr = as.character(year),
+      ts = time_step,
+      type = 'ests'
+    ) |>
+    select(yr_type, yr, ts, type, area_code, var = source, val = total_retained_coho)     |>
+    bind_rows(
+      fram_all_years() %>%
+        mutate(
+          selector = if_else(var == 'MSFQuota', 'MSF', 'NS') 
+        ) %>%
+        filter(
+          selector %in% input$msf,
+          yr >= 2010
+        ) %>% 
+        select(-selector) 
+    )
+  
+  
+  
+  fram_ests %>%
+    ggplot(aes(yr_type, val, fill = var)) +
+    geom_col(position = position_stack(), alpha = 0.7) +
+    #geom_col(data = filter(fram_ests, type == "ests"), position = position_stack(), alpha = .6) +
+    #geom_col(data = filter(fram_ests, type == "pst"), position = position_stack(), alpha = 1) +
     geom_hline(yintercept = wday_harvest() + wend_harvest()) +
-    scale_y_continuous("CRC harvest estimate", sec.axis = dup_axis(), labels = scales::comma) +
-    scale_fill_manual(values = pal_m) +
+    scale_y_continuous("FRAM inputs", sec.axis = dup_axis(), labels = scales::comma) +
+    scale_fill_manual(values = c(
+      "Quota" = "#D2A554",
+      "MSFQuota" = "#A4BADF",
+      "CRC" = "#04a43c",
+      "CREEL" = "#014218"
+    )) +
     labs(
       subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
     ) +
     theme(
-      text = element_text(size = 20)
-      )
+      text = element_text(size = 20),
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+    )
 })
 
 ```
 
-### Estimates
 
-```{r estimate_table}
-DT::renderDT({out$est})
+### FRAM Performance
+```{r fram_performance}
+renderPlot({
+  ests <- pssp_at() %>%
+    mutate(
+      # take care of NA's
+      across(starts_with('coho'), ~replace_na(.x, 0)),
+      # apportion unk mark-status to ad/um for retention
+      coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / (coho_104_ad_ret + coho_104_um_ret ))),
+      coho_ad_k = replace_na(coho_104_ad_ret, 0),
+      coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret /  (coho_104_ad_ret + coho_104_um_ret ))),
+      coho_um_k = replace_na(coho_104_um_ret, 0),
+      total_retained_coho = coho_ad_k + coho_um_k
+    ) |>
+    group_by(time_step, area_code, year) %>%
+    summarize(total_retained_coho = sum(total_retained_coho, na.rm=T), .groups = 'drop')
+  
+  fram <- fram_at() %>%
+    mutate(
+      selector = if_else(var == 'MSFQuota', 'MSF', 'NS') 
+    ) %>%
+    filter(
+      selector %in% input$msf
+    ) %>% 
+    select(-selector) %>%
+    mutate(
+      year = as.integer(yr),
+      time_step = ts
+    ) %>%
+    group_by(year, time_step, area_code) %>%
+    summarize(predicted_retained_coho = sum(val, na.rm=T), .groups = 'drop')
+  
+  plot <- fram %>%
+    inner_join(ests, by = c("year", "time_step", "area_code")) %>%
+    mutate(
+      percent = (total_retained_coho - predicted_retained_coho) / total_retained_coho,
+      ape = abs(percent),
+      type = percent < 0,
+      sq_dev = (total_retained_coho - predicted_retained_coho)^2,
+      
+    ) 
+  
+  rmse <- round(sqrt(plot$sq_dev))
+  mape <- round(mean(plot$ape), 2)
+  mpe <- round(mean(plot$percent), 2)
+  
+  plot %>%
+    ggplot(aes(factor(year), percent, fill = type)) +
+    geom_col(alpha = 0.8) +
+    labs(
+      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","), 'RMSE: ', rmse, ' MAPE:', mape, 'MPE: ', mpe, '      (post-pre) / post'),
+      x = NULL,
+      y = 'Percent Error'
+    ) +
+    scale_y_continuous(labels = scales::percent) +
+    theme(
+      axis.text.x = element_text(angle = 90,vjust = 0.5, hjust=1),
+      text = element_text(size = 20),
+      legend.position = 'none'
+    )
+  
+  
+})
+```
+
+### Daily Harvest
+```{r gg_daily}
+renderPlot({
+  day_plot <- pssp_at() |>
+    filter(regulation_type_code %in% input$msf) |>
+      mutate(
+        # take care of NA's
+        across(starts_with('coho'), ~replace_na(.x, 0)),
+        # apportion unk mark-status to ad/um for retention
+        coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / (coho_104_ad_ret + coho_104_um_ret ))),
+        coho_ad_k = replace_na(coho_104_ad_ret, 0),
+        coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret /  (coho_104_ad_ret + coho_104_um_ret ))),
+        coho_um_k = replace_na(coho_104_um_ret, 0),
+        total_retained_coho = coho_ad_k + coho_um_k
+      )
+  
+  day_plot |> 
+    ggplot(aes(factor(year), total_retained_coho, fill = day_type)) +
+    geom_boxplot() +
+    labs(
+      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ",")),
+      y = 'Total Retained Coho',
+      x = 'Day Type'
+    ) + 
+    theme(
+      text = element_text(size = 20)
+      )
+    
+})
+```
+
+### Mean Daily Harvest
+
+```{r mean_daily_harvest}
+# renderText({
+#   
+# })
+# 
+
+renderPlot({
+  
+  mean_harvest_plot <- pssp_at() |>
+    filter(regulation_type_code %in% input$msf) |>
+    rowwise() %>%
+    mutate(total_retained_coho = coho_104_ad_ret + coho_104_um_ret + coho_104_uk_ret) |>
+    group_by(year, regulation_type_code) |>
+    summarize(mean_est = mean(total_retained_coho, na.rm = T),
+              .groups = 'drop')
+  
+  input_mean <- ((input$wend_df * input$wend_hpd) +  (input$wday_df * input$wday_hpd)) / (input$wday_df + input$wend_df)
+  
+  mean_harvest_plot |> 
+    ggplot(aes(factor(year), mean_est, fill = regulation_type_code, group=mean_est)) +
+    geom_col(position = position_dodge(), alpha=0.8) +
+    geom_hline( yintercept = input_mean) +
+    labs(
+      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ",")),
+      y = 'Mean Coho Harvest Per Day',
+      x = 'Year'
+    ) +
+    theme(
+      text = element_text(size = 20)
+      )
+    
+})
+
+
+#((input$wend_df * input$wend_hpd) +  (input$wday_df * input$wday_hpd)) / (input$wday_df + input$wend_df)
+
+
+
 
 ```
+
+### Historical Days Open
+```{r regs_table}
+renderTable({
+  regs_at() %>%
+    mutate(total_days = WE + WD) %>%
+    arrange(-year) %>%
+    mutate(year = as.character(year))
+})
+```
+
+### Saved Inputs
+```{r, download_link}
+downloadLink("download", label = "Download csv")
+if (on_web_server){
+  output$download <- downloadHandler(
+    filename = function() {
+      paste("coho_sport_harvest_est_", Sys.Date(), ".csv", sep="")
+    },
+    content = function(file) {
+      write_csv(user_ests$find(), file)
+    }
+  )
+} else {
+  output$download <- downloadHandler(
+    filename = function() {
+      paste("coho_sport_harvest_est_", Sys.Date(), ".csv", sep="")
+    },
+    content = function(file) {
+      write_csv(out$est, file)
+    }
+  )
+}
+
+```
+
+```{r ests_table}
+if (on_web_server) {
+  # poll database
+  users_inputs <- reactivePoll(
+    1000,
+    session,
+    
+    # check if something changed
+    checkFunc = function() {
+      ests <- user_ests$find()
+      
+      
+      sum(ests$est,
+          ests$wday_df,
+          ests$wend_df,
+          ests$wday_hpd,
+          ests$wend_hpd)
+    },
+    valueFunc = function() {
+      # pull new data
+      user_ests$find()
+    }
+    
+    
+  )
+  # display table from database
+  renderTable({
+    users_inputs()
+  })
+} else{
+  # otherwise display local
+  renderTable({
+    out$est
+  })
+}
+
+
+```
+
+```{css est_table}
+#section-saved-inputs
+  .chart-shim {
+    overflow-y: scroll;
+    }
+```
+
+<!-- ### Load Saved Inputs -->
+
+```{r load_inputs}
+# still working on this
+
+# renderUI({
+#   selectInput("area",label = "Area",
+#       choices =as.list(out$est %>%
+#                          filter(est > 0) %>%
+#                          .$area_code))
+# })
+# 
+# renderUI({
+#   selectInput("area",label = "Area",
+#       choices =as.list(out$est %>%
+#                          filter(est > 0) %>%
+#                          .$area_code))
+# })
+
+
+```
+
