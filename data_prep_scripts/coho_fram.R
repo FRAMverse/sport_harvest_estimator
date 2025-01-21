@@ -1,10 +1,10 @@
 # fram fisheries, refactored from DA's sport estimator script
-# framr::read_coho_fish_sclr refactored into a SQL query
+# framr::read_coho_fish_sclr refactored into a SQL query#
 #library(tidyverse)
 
 print('### FRAM Databases ###')
 
-pre_season_fram_db <- here::here("data/sources/PSC_CoTC_Preseason_CohoFRAMDB_thru2022.mdb")
+pre_season_fram_db <- here::here("data/sources/PSC_CoTC_Preseason_CohoFRAMDB_thru2023.mdb")
 
 # sql to query pre and post-season fram databases, should be able to copy and paste directly into access
 sql <- "SELECT RunID.RunYear,
