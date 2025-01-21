@@ -377,7 +377,7 @@ observeEvent(ignoreInit = TRUE,
                  )
                  
                  updateCheckboxGroupInput(inputId = 'msf', selected = c('NS', 'MSF'))
-                 updateCheckboxGroupInput(inputId = 'years', selected = 2003:2022)
+                 updateCheckboxGroupInput(inputId = 'years', selected = 2003:2023)
                } else {
                  if (on_web_server) {
                    saved_input <- user_ests$find(
@@ -508,77 +508,90 @@ observeEvent(ignoreInit = TRUE,
              c(input$focal_area, input$focal_ts), {
 
                
-               # pull from database if there is a data saved
-               if (on_web_server) {
-                 saved_input <- user_ests$find(
-                   glue::glue(
-                     '{"area_code": "{{input$focal_area}}", "timestep": "{{input$focal_ts}}"}',
-                     .open = "{{",
-                     .close = "}}"
-                   )
-                 )
-                 
-                 
-                 saved_wday <- saved_input %>%
-                   .$wday_df
-                 
-                 saved_wend <- saved_input %>%
-                   .$wend_df
-                 
-                 saved_wday_h <- saved_input %>%
-                   .$wday_hpd
-                 
-                 saved_wend_h <- saved_input %>%
-                   .$wend_hpd
-                 
-                 saved_years <- saved_input %>%
-                   .$years
-                 
-                 saved_years <- strsplit(saved_years, ",")[[1]]
-                 
-                 saved_regs <- saved_input %>%
-                   .$reg
-                 
-                 saved_regs <- strsplit(saved_regs, ",")[[1]]
-                 
-                 saved_ration <- saved_input %>%
-                 .$rationale
-                 
-                 # if nothing as been saved
-                 
-                 if (length(saved_years) == 0) {
-                   wd_days <- recent_regs_at() %>%
-                     # calculate most recent regulation weedays
-                     .$WD
-                   
-                   updateNumericInput(inputId = 'wday_df', value = wd_days)
-                   
-                   
-                   we_days <- recent_regs_at() %>%
-                     .$WE
-                   
-                   updateNumericInput(inputId = 'wend_df', value = we_days)
-                   
-                 } else {
-                   # set days from database
-                   updateNumericInput(inputId = 'wday_df', value = saved_wday)
-                   updateNumericInput(inputId = 'wend_df', value = saved_wend)
-                   
-                   
-                   updateNumericInput(inputId = 'wend_hpd', value = saved_wend_h)
-                   updateNumericInput(inputId = 'wday_hpd', value = saved_wday_h)
-                   
-                   
-                   updateCheckboxGroupInput(inputId = 'years', selected = as.numeric(saved_years))
-                   updateCheckboxGroupInput(inputId = 'msf', selected = saved_regs)
-                   
-                   updateTextInput(inputId = 'rationale', value =  saved_ration)
-                   
-                 }
-                 
-                 
-                 
-               } else {
+               # # pull from database if there is a data saved
+               # if (on_web_server) {
+               #   saved_input <- user_ests$find(
+               #     glue::glue(
+               #       '{"area_code": "{{input$focal_area}}", "timestep": "{{input$focal_ts}}"}',
+               #       .open = "{{",
+               #       .close = "}}"
+               #     )
+               #   )
+               #   
+               #   
+               #   saved_wday <- saved_input %>%
+               #     .$wday_df
+               #   
+               #   saved_wend <- saved_input %>%
+               #     .$wend_df
+               #   
+               #   saved_wday_h <- saved_input %>%
+               #     .$wday_hpd
+               #   
+               #   saved_wend_h <- saved_input %>%
+               #     .$wend_hpd
+               #   
+               #   saved_years <- saved_input %>%
+               #     .$years
+               #   
+               #   saved_years <- strsplit(saved_years, ",")[[1]]
+               #   
+               #   saved_regs <- saved_input %>%
+               #     .$reg
+               #   
+               #   saved_regs <- strsplit(saved_regs, ",")[[1]]
+               #   
+               #   saved_ration <- saved_input %>%
+               #   .$rationale
+               #   
+               #   # if nothing as been saved
+               #   
+               #   if (length(saved_years) == 0) {
+               #     wd_days <- recent_regs_at() %>%
+               #       # calculate most recent regulation weedays
+               #       .$WD
+               #     
+               #     updateNumericInput(inputId = 'wday_df', value = wd_days)
+               #     
+               #     
+               #     we_days <- recent_regs_at() %>%
+               #       .$WE
+               #     
+               #     updateNumericInput(inputId = 'wend_df', value = we_days)
+               #     
+               #   } else {
+               #     # set days from database
+               #     updateNumericInput(inputId = 'wday_df', value = saved_wday)
+               #     updateNumericInput(inputId = 'wend_df', value = saved_wend)
+               #     
+               #     
+               #     updateNumericInput(inputId = 'wend_hpd', value = saved_wend_h)
+               #     updateNumericInput(inputId = 'wday_hpd', value = saved_wday_h)
+               #     
+               #     
+               #     updateCheckboxGroupInput(inputId = 'years', selected = as.numeric(saved_years))
+               #     updateCheckboxGroupInput(inputId = 'msf', selected = saved_regs)
+               #     
+               #     updateTextInput(inputId = 'rationale', value =  saved_ration)
+               #     
+               #   }
+               #   
+               #   
+               #   
+               # } else {
+               #   wd_days <- recent_regs_at() %>%
+               #     # calculate most recent regulation weekdays
+               #     .$WD
+               #   
+               #   updateNumericInput(inputId = 'wday_df', value = wd_days)
+               #   
+               #   
+               #   we_days <- recent_regs_at() %>%
+               #     .$WE
+               #   
+               #   updateNumericInput(inputId = 'wend_df', value = we_days)
+               # }
+               
                  wd_days <- recent_regs_at() %>%
                    # calculate most recent regulation weekdays
                    .$WD
@@ -590,7 +603,7 @@ observeEvent(ignoreInit = TRUE,
                    .$WE
                  
                  updateNumericInput(inputId = 'wend_df', value = we_days)
-               }
+               
 })
 
 
@@ -656,15 +669,15 @@ actionLink('select_all_years', 'Select All')
 actionLink('select_recent_years', 'Select Recent 6 years')
 
 checkboxGroupInput("years", "Focal years", inline = T, width = '100%',
-                   choices = 2004:2022,
-                   selected = 2004:2022# don't hardcode next year
+                   choices = 2004:2023,
+                   selected = 2004:2023# don't hardcode next year, next year is here and i still hardcoded it bahaha!!!
                    )
 
 observeEvent(
   ignoreInit = TRUE,
   input$select_all_years,
   {
-    updateCheckboxGroupInput(inputId = 'years', selected = 2004:2022)
+    updateCheckboxGroupInput(inputId = 'years', selected = 2004:2023)
     
     }
 )
@@ -673,7 +686,7 @@ observeEvent(
   ignoreInit = TRUE,
   input$select_recent_years,
   {
-    updateCheckboxGroupInput(inputId = 'years', selected = 2017:2022)
+    updateCheckboxGroupInput(inputId = 'years', selected = 2016:2023)
     }
 )
 
