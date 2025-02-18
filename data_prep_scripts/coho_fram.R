@@ -4,7 +4,7 @@
 
 print('### FRAM Databases ###')
 
-pre_season_fram_db <- here::here("data/sources/PSC_CoTC_Preseason_CohoFRAMDB_thru2023.mdb")
+pre_season_fram_db <- here::here("data/sources/PSC_CoTC_Preseason_CohoFRAMDB_thru2024_06182024.mdb")
 
 # sql to query pre and post-season fram databases, should be able to copy and paste directly into access
 sql <- "SELECT RunID.RunYear,
