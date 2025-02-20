@@ -8,7 +8,7 @@ source(here::here('data_prep_scripts/coho_estimates.R'))
 
 
 # comments on the data associated with this update
-comment <- 'fix fram errors'
+comment <- 'Updated CRC database to include missing areas, cover all zeroes'
 
 # save to sqlite database
 con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
@@ -24,6 +24,3 @@ DBI::dbDisconnect(con)
 
 # fisheries where there are no estimates of catch are 0's
 source(here::here('data_prep_scripts/coho_na_to_zero_fisheries_no_catch.R'))
-
-
-
