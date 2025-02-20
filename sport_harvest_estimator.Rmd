@@ -283,7 +283,7 @@ ts_lut = tribble(
   3, paste0(cur_year, "-8-1"), paste0(cur_year, "-8-31"),
   4, paste0(cur_year, "-9-1"), paste0(cur_year, "-9-30"),
   5, paste0(cur_year, "-10-1"), paste0(cur_year, "-12-31"),
-  1, paste0(as.numeric(cur_year)+1, "-1-1"), paste0(as.numeric(cur_year)+1, "-6-30")
+  1, paste0(as.numeric(cur_year)+1, "-1-1"), paste0(as.numeric(cur_year)+1, "-4-30")
 ) |> 
   mutate(start_date = as_date(start_date),
          end_date = as_date(end_date))
