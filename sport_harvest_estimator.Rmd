@@ -190,7 +190,8 @@ reg_days_bytype <- daily_regs %>% ##CBE addition
   count(catch_area_code, regulation_type_code, year, time_step, day_type) %>%
   pivot_wider(names_from = day_type, values_from = n)
 
-
+## find available years for easier automation of Year selection
+years_available = sort(unique(pssp$year))
 ```
 
 About
@@ -790,7 +791,7 @@ observeEvent(
   ignoreInit = TRUE,
   input$select_all_years,
   {
-    updateCheckboxGroupInput(inputId = 'years', selected = 2004:2024)
+    updateCheckboxGroupInput(inputId = 'years', selected = 2004:max(years_available))
     
   }
 )
@@ -799,7 +800,7 @@ observeEvent(
   ignoreInit = TRUE,
   input$select_recent_years,
   {
-    updateCheckboxGroupInput(inputId = 'years', selected = 2018:2024)
+    updateCheckboxGroupInput(inputId = 'years', selected = tail(years_available, 6))
   }
 )
 
@@ -1010,16 +1011,9 @@ renderPlot({
       total_retained_coho = coho_ad_k + coho_um_k
     )
   
-  df_daily_means <- 
-    tibble(day_type = c("WD", "WE"),
-           cur_inputs = c(input$wday_df, input$wend_df))
-  
   day_plot |> 
     ggplot(aes(factor(year), total_retained_coho, fill = day_type)) +
     geom_boxplot() +
-    # geom_hline(data = df_daily_means,
-    #            aes(yintercept = cur_inputs, col = day_type),
-    #            linetype = 2) +
     labs(
       subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ",")),
       y = 'Total Retained Coho',
