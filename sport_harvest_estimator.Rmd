@@ -249,8 +249,6 @@ checkboxGroupInput("msf", label = "Regulation",
                    choices = c('NS', 'MSF'), 
                    selected = c('NS','MSF'), inline = T, width = '100%')
 
-
-
 ```
 
 ### Harvest estimates
@@ -277,82 +275,30 @@ renderValueBox({
 
 ```
 
-### Output
+### Custom Strata: mean daily harvest for custom dates
 
-```{r keep_dl_buttons}
+Only used if "Focal Timestep" is set to "Custom Strata". Press button to calculate.
 
-
-textInput("rationale", label = "Rationale")
-actionButton("keep", label = "Keep estimates")
-
+```{r custom_strata}
+textInput("custom_start", label = "Custom Strata Start Date (MM-DD format)",
+          value = "09-01", width = '100%')
+textInput("custom_end", label = "Custom Strata End Date (MM-DD format)",
+          value = "09-30", width = '100%')
+actionButton(inputId = "run_custom", label = "Calculate Custom Strata")
 ```
 
-### Day Calculator & Custom Strata
 
-<!-- If Focal Timestep is set to "Custom Strata", daily harvest will be calculated for this timespan. Otherwise, merely calculates WD and WE in span. -->
+<!-- ### Output -->
 
-```{r}
-cur_year = format(Sys.Date(), "%Y")
-ts_lut = tribble(
-  ~ time_step, ~start_date, ~end_date,
-  2, paste0(cur_year, "-7-1"), paste0(cur_year, "-7-31"),
-  3, paste0(cur_year, "-8-1"), paste0(cur_year, "-8-31"),
-  4, paste0(cur_year, "-9-1"), paste0(cur_year, "-9-30"),
-  5, paste0(cur_year, "-10-1"), paste0(cur_year, "-12-31"),
-  1, paste0(as.numeric(cur_year)+1, "-1-1"), paste0(as.numeric(cur_year)+1, "-4-30")
-) |> 
-  mutate(start_date = as_date(start_date),
-         end_date = as_date(end_date))
+<!-- ```{r keep_dl_buttons} -->
 
 
-textInput("start_date", label = "Start Date",
-          value = "", width = '100%')
-textInput("end_date", label = "End Date",
-          value = "", width = '100%')
+<!-- textInput("rationale", label = "Rationale") -->
+<!-- actionButton("keep", label = "Keep estimates") -->
+
+<!-- ``` -->
 
 
-
-
-
-
-## calculate weekend and weekdays
-# input$start_date input$end_date
-days_spanned = reactive({
-  if(all(!is.na(as_date(c(input$start_date, input$end_date))))){
-    days.per.ts = tibble(
-      date = seq(as_date(input$start_date), as_date(input$end_date), by = 'day'),
-      day_type = if_else(
-        lubridate::wday(date, label = T) %in% c('Fri', 'Sat', 'Sun'),
-        'WE',
-        'WD'
-      )
-    ) |>
-      mutate(
-        day_type = if_else(is_holiday_weekend(date), 'WE', day_type),
-        year = lubridate::year(date),
-        time_step = case_match(lubridate::month(date),
-                               1:6 ~ 1,
-                               7 ~ 2,
-                               8 ~ 3,
-                               9 ~ 4,
-                               10:12 ~ 5)
-      ) |>
-      count(year, time_step, day_type) |>
-      pivot_wider(names_from = day_type, values_from = n) |> 
-      mutate(year = as.character(year),
-             time_step = as.character(time_step))
-    
-  } else {
-    data.frame(Dates = "one or more dates is not legal")
-  }
-  
-})
-
-renderTable({
-  days_spanned()
-})
-
-```
 
 
 ```{r keeper, echo=F}
@@ -418,8 +364,8 @@ pssp_at <- reactive({
     pssp |> 
       mutate(date_common_year = as_date(gsub("^(.*?)-", "2020-", date))) |>  ## using leap year; specific year doesn't matter.
       filter(area_code == input$focal_area,
-             date_common_year >= as_date(gsub("^(.*?)-", "2020-", input$custom_start)),
-             date_common_year <= as_date(gsub("^(.*?)-", "2020-", input$custom_end)),
+             date_common_year >= as_date(paste("2020-", input$custom_start)),
+             date_common_year <= as_date(paste("2020-", input$custom_end)),
              year %in% input$years) |> 
       select(-date_common_year)
   }
@@ -485,11 +431,12 @@ observeEvent(ignoreInit = TRUE,
              {
                ## catching date issues for custom strata
                if(input$focal_ts == -99 & 
-                  any(is.na(as_date(c(input$custom_start, input$custom_end))))){
+                  any(is.na(as_date(paste0("2020-",c(input$custom_start, input$custom_end)))))
+               ){
                  showModal(
                    modalDialog(
                      title = 'Dates not workable',
-                     'Custom strata dates are not readable. Use format YYYY-MM-DD'
+                     'Custom strata dates are not readable. Use format MM-DD'
                    )
                  )
                  updateRadioButtons(inputId = 'focal_ts', selected = 4)
@@ -770,17 +717,73 @@ observeEvent(ignoreInit = TRUE,
 ```
 
 
-Controls {data-height=225}
+Controls {data-height=300}
 --------------------------------------------
 
-### Custom Strata
-```{r custom_strata}
-textInput("custom_start", label = "Custom Strata Start Date",
-          value = "2025-09-01", width = '100%')
-textInput("custom_end", label = "Custom Strata End Date",
-          value = "2025-09-30", width = '100%')
+### Day Calculator
 
-actionButton(inputId = "run_custom", label = "Calculate Custom Strata")
+
+```{r}
+cur_year = format(Sys.Date(), "%Y")
+ts_lut = tribble(
+  ~ time_step, ~start_date, ~end_date,
+  2, paste0(cur_year, "-7-1"), paste0(cur_year, "-7-31"),
+  3, paste0(cur_year, "-8-1"), paste0(cur_year, "-8-31"),
+  4, paste0(cur_year, "-9-1"), paste0(cur_year, "-9-30"),
+  5, paste0(cur_year, "-10-1"), paste0(cur_year, "-12-31"),
+  1, paste0(as.numeric(cur_year)+1, "-1-1"), paste0(as.numeric(cur_year)+1, "-4-30")
+) |> 
+  mutate(start_date = as_date(start_date),
+         end_date = as_date(end_date))
+
+
+textInput("start_date", label = "Start Date",
+          value = "", width = '100%')
+textInput("end_date", label = "End Date",
+          value = "", width = '100%')
+
+
+
+
+
+
+## calculate weekend and weekdays
+# input$start_date input$end_date
+days_spanned = reactive({
+  if(all(!is.na(as_date(c(input$start_date, input$end_date))))){
+    days.per.ts = tibble(
+      date = seq(as_date(input$start_date), as_date(input$end_date), by = 'day'),
+      day_type = if_else(
+        lubridate::wday(date, label = T) %in% c('Fri', 'Sat', 'Sun'),
+        'WE',
+        'WD'
+      )
+    ) |>
+      mutate(
+        day_type = if_else(is_holiday_weekend(date), 'WE', day_type),
+        year = lubridate::year(date),
+        time_step = case_match(lubridate::month(date),
+                               1:6 ~ 1,
+                               7 ~ 2,
+                               8 ~ 3,
+                               9 ~ 4,
+                               10:12 ~ 5)
+      ) |>
+      count(year, time_step, day_type) |>
+      pivot_wider(names_from = day_type, values_from = n) |> 
+      mutate(year = as.character(year),
+             time_step = as.character(time_step))
+    
+  } else {
+    data.frame(Dates = "one or more dates is not legal")
+  }
+  
+})
+
+renderTable({
+  days_spanned()
+})
+
 ```
 
 ### Weekday assumptions
@@ -898,6 +901,16 @@ renderPlot({
     )
   
   
+  time_label = case_when(input$focal_ts == 1 ~ "1: Jan-Jun",
+                          input$focal_ts == 2 ~ "2: Jul", 
+                          input$focal_ts == 3 ~ "3: Aug",
+                          input$focal_ts == 4 ~ "4: Sep",
+                          input$focal_ts == 5 ~ "5: Oct-Dec", 
+                          input$focal_ts == -99 ~ paste0("Custom Strata: ",
+                                                         input$custom_start,
+                                                         " to ", 
+                                                         input$custom_end)
+  )
   
   fram_ests %>%
     ggplot(aes(yr_type, val, fill = var)) +
@@ -913,7 +926,7 @@ renderPlot({
       "CREEL" = "#014218"
     )) +
     labs(
-      subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ","))
+      subtitle = paste("Area", input$focal_area, "during", time_label)
     ) +
     theme(
       text = element_text(size = 20),
