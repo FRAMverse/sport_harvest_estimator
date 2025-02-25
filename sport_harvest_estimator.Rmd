@@ -23,6 +23,7 @@ library("tidyverse")
 library("shiny")
 library("patchwork")
 library("gt")
+library(lubridate)
 
 
 
@@ -78,7 +79,7 @@ pal_m <- set_names(
 
 pal_ts <- set_names(
   c("#D2A554", "#626B5D", "#8C8F9E", "#858753", "#A4BADF"),
-  paste(1:5, c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":")
+  paste(c(1:5), c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":")
 )
 
 # this is on someone's personal computer 
@@ -101,6 +102,25 @@ if (on_web_server == FALSE) {
   )
 }
 
+is_holiday <- function(date){
+  data.frame(date = date) |> 
+    mutate(date.memorial = as.Date(timeDate::USMemorialDay(lubridate::year(date))),
+           date.labor = as.Date(timeDate::USLaborDay(lubridate::year(date))),
+           date.xmas = as.Date(timeDate::USChristmasDay(lubridate::year(date))),
+           date.indep = as.Date(timeDate::USIndependenceDay(lubridate::year(date))),
+           date.ny = as.Date(timeDate::USNewYearsDay(lubridate::year(date))),
+           is.hol = date %in% c(date.memorial, date.labor, date.xmas, date.indep, date.ny)) |> 
+    pull(is.hol)
+}
+
+is_holiday_weekend <- function(date){
+  data.frame(date = date) |> 
+    mutate(is.mon = lubridate::wday(date) == 2, # test if f monday
+           is.hol = is_holiday(date),
+           is.holiday.weekend = is.mon & is.hol) |> 
+    pull(is.holiday.weekend)
+  # return(df)
+}
 
 
 ```
@@ -128,19 +148,11 @@ if (on_web_server){
   # compilation of FRAM parameters from post-season and pre-season databases
   fs_ps_spt <- DBI::dbReadTable(con, 'coho_fram')
   
-  holidays <- read_csv(
-    'https://www.federalpay.org/resources/holidays/Federal%20Holidays%20-%20all.csv'
-  ) |>
-    janitor::clean_names() |>
-    mutate(date = lubridate::as_date(observed_date, format = '%B %d, %Y'),
-           holiday = TRUE) |>
-    select(date, holiday)
-  
   # disconnect from database
   DBI::dbDisconnect(con)
   
   ## save the key pieces to an Rdata file for future use.
-  save(list = c("pssp", "regs", "fs_ps_spt", "holidays"),
+  save(list = c("pssp", "regs", "fs_ps_spt"),
        file = 'sport_harvest_estimator.RData')
 }
 
@@ -166,7 +178,8 @@ daily_regs <- regs %>%
       lubridate::month(date) %in% c(10, 11, 12) ~ 5L
     ),
     year = lubridate::year(date)
-  )
+  ) |> 
+  mutate(day_type = if_else(is_holiday_weekend(date), 'WE', day_type))
 
 # ugh, realized dates!!!!!!!!!!!!!!!!!!!!!!!!!!!! need planned/pamphlet!!!
 regs_day_type_count <- daily_regs %>%
@@ -228,8 +241,8 @@ radioButtons("focal_area", label = "Focal Area",
              choices = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"), selected = "05", inline = T, width = '100%')
 
 radioButtons("focal_ts", label = "Focal Timestep",
-             choiceValues = 1:5, 
-             choiceNames = paste(1:5, c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":"), 
+             choiceValues = c(1:5,-99), 
+             choiceNames = c(paste(1:5, c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":"), "Custom Strata"), 
              selected = 4, inline = T, width = '100%')
 
 checkboxGroupInput("msf", label = "Regulation",
@@ -274,7 +287,9 @@ actionButton("keep", label = "Keep estimates")
 
 ```
 
-### Day Calculator
+### Day Calculator & Custom Strata
+
+<!-- If Focal Timestep is set to "Custom Strata", daily harvest will be calculated for this timespan. Otherwise, merely calculates WD and WE in span. -->
 
 ```{r}
 cur_year = format(Sys.Date(), "%Y")
@@ -312,9 +327,8 @@ days_spanned = reactive({
         'WD'
       )
     ) |>
-      left_join(holidays) |> # auguement monday + holday = WE
       mutate(
-        day_type = if_else(lubridate::wday(date, label = T) == 'Mon' & !is.na(holiday), 'WE', day_type),
+        day_type = if_else(is_holiday_weekend(date), 'WE', day_type),
         year = lubridate::year(date),
         time_step = case_match(lubridate::month(date),
                                1:6 ~ 1,
@@ -392,10 +406,23 @@ observeEvent(
 
 pssp_at <- reactive({
   # no base period area 12 for july, add july to august
-  filter(pssp, 
-         area_code == input$focal_area,
-         time_step == input$focal_ts, 
-         year %in% input$years)
+  if(input$focal_ts != -99){
+    filter(pssp, 
+           area_code == input$focal_area,
+           time_step == input$focal_ts, 
+           year %in% input$years)
+  } else {
+    ## check that dates are legal
+    
+    ## doing some annoying work to make year-compatible dates for easier filtering
+    pssp |> 
+      mutate(date_common_year = as_date(gsub("^(.*?)-", "2020-", date))) |>  ## using leap year; specific year doesn't matter.
+      filter(area_code == input$focal_area,
+             date_common_year >= as_date(gsub("^(.*?)-", "2020-", input$custom_start)),
+             date_common_year <= as_date(gsub("^(.*?)-", "2020-", input$custom_end)),
+             year %in% input$years) |> 
+      select(-date_common_year)
+  }
 })
 
 fram_at <- reactive({
@@ -447,97 +474,164 @@ fram_all_years <- reactive({
 # inputs. the days are pulled from the most recent fishery by area/timestep
 # harvest is the mean selected from the year checkboxes
 
-
 # application supplied harvest per day
 observeEvent(ignoreInit = TRUE,
+             ignoreNULL = TRUE,
              c(input$focal_area,
                input$focal_ts,
                input$years,
-               input$msf),
+               input$msf,
+               input$run_custom),
              {
-               # catch a corner case, if user input doesn't have fisheries to
-               # take a mean of, turn off the regulation filtering
-               if (nrow(pssp_at()  %>% filter(regulation_type_code %in% input$msf)) == 0) {
+               ## catching date issues for custom strata
+               if(input$focal_ts == -99 & 
+                  any(is.na(as_date(c(input$custom_start, input$custom_end))))){
                  showModal(
                    modalDialog(
-                     title = 'No Usuable Data',
-                     'There are no previous data to calculate mean harvest by day.
-      Defaulting to whatever data available'
+                     title = 'Dates not workable',
+                     'Custom strata dates are not readable. Use format YYYY-MM-DD'
                    )
                  )
-                 
-                 updateCheckboxGroupInput(inputId = 'msf', selected = c('NS', 'MSF'))
-                 updateCheckboxGroupInput(inputId = 'years', selected = 2003:2024)
+                 updateRadioButtons(inputId = 'focal_ts', selected = 4)
                } else {
                  
-                 ## For calculating days based on regs
-                 days_lut <- regs_bytype_at() |>
-                   filter(regulation_type_code %in% input$msf) |> 
-                   group_by(catch_area_code, year, time_step) |> 
-                   summarize(WD = sum(WD),
-                             WE = sum(WE), 
-                             .groups = 'drop') |> 
-                   rename(area_code = catch_area_code) |> 
-                   pivot_longer(WD:WE, values_to = "days", names_to = "day_type")
-                 
-                 updateTextInput(inputId = 'start_date', 
-                                 value = 
-                                   ts_lut |> 
-                                   filter(time_step == input$focal_ts) |> 
-                                   pull(start_date)
-                 )
-                 updateTextInput(inputId = 'end_date', 
-                                 value = 
-                                   ts_lut |> 
-                                   filter(time_step == input$focal_ts) |> 
-                                   pull(end_date)
-                 )
-                 
-                 if (on_web_server) {
-                   saved_input <- user_ests$find(
-                     glue::glue(
-                       '{"area_code": "{{input$focal_area}}", "timestep": "{{input$focal_ts}}"}',
-                       .open = "{{",
-                       .close = "}}"
+                 # catch a corner case, if user input doesn't have fisheries to
+                 # take a mean of, turn off the regulation filtering
+                 if (nrow(pssp_at()  %>% filter(regulation_type_code %in% input$msf)) == 0) {
+                   showModal(
+                     modalDialog(
+                       title = 'No Usuable Data',
+                       'There are no previous data to calculate mean harvest by day.
+      Defaulting to whatever data available'
                      )
                    )
                    
-                   saved_wday <- saved_input %>%
-                     .$wday_df
+                   updateCheckboxGroupInput(inputId = 'msf', selected = c('NS', 'MSF'))
+                   updateCheckboxGroupInput(inputId = 'years', selected = 2003:2024)
+                 } else {
                    
-                   saved_wend <- saved_input %>%
-                     .$wend_df
+                   ## For calculating days based on regs
+                   # days_lut <- regs_bytype_at() |>
+                   #   filter(regulation_type_code %in% input$msf) |> 
+                   #   group_by(catch_area_code, year, time_step) |> 
+                   #   summarize(WD = sum(WD),
+                   #             WE = sum(WE), 
+                   #             .groups = 'drop') |> 
+                   #   rename(area_code = catch_area_code) |> 
+                   #   pivot_longer(WD:WE, values_to = "days", names_to = "day_type")
                    
-                   saved_wday_h <- saved_input %>%
-                     .$wday_hpd
+                   if(input$focal_ts != -99){ ## normal timesteps
+                     updateTextInput(inputId = 'start_date', 
+                                     value = 
+                                       ts_lut |> 
+                                       filter(time_step == input$focal_ts) |> 
+                                       pull(start_date)
+                     )
+                     updateTextInput(inputId = 'end_date', 
+                                     value = 
+                                       ts_lut |> 
+                                       filter(time_step == input$focal_ts) |> 
+                                       pull(end_date)
+                     )
+                   }
                    
-                   saved_wend_h <- saved_input %>%
-                     .$wend_hpd
-                   
-                   saved_years <- saved_input %>%
-                     .$years
-                   
-                   saved_years <- strsplit(saved_years, ",")[[1]]
-                   
-                   saved_regs <- saved_input %>%
-                     .$reg
-                   
-                   saved_regs <- strsplit(saved_regs, ",")[[1]]
-                   
-                   saved_ration <- saved_input %>%
-                     .$rationale
-                   
-                   if (length(saved_years) == 0 | !setequal(saved_years, input$years) | !setequal(saved_regs, input$msf)) {
+                   if (on_web_server) {
+                     saved_input <- user_ests$find(
+                       glue::glue(
+                         '{"area_code": "{{input$focal_area}}", "timestep": "{{input$focal_ts}}"}',
+                         .open = "{{",
+                         .close = "}}"
+                       )
+                     )
+                     
+                     saved_wday <- saved_input %>%
+                       .$wday_df
+                     
+                     saved_wend <- saved_input %>%
+                       .$wend_df
+                     
+                     saved_wday_h <- saved_input %>%
+                       .$wday_hpd
+                     
+                     saved_wend_h <- saved_input %>%
+                       .$wend_hpd
+                     
+                     saved_years <- saved_input %>%
+                       .$years
+                     
+                     saved_years <- strsplit(saved_years, ",")[[1]]
+                     
+                     saved_regs <- saved_input %>%
+                       .$reg
+                     
+                     saved_regs <- strsplit(saved_regs, ",")[[1]]
+                     
+                     saved_ration <- saved_input %>%
+                       .$rationale
+                     
+                     if (length(saved_years) == 0 | !setequal(saved_years, input$years) | !setequal(saved_regs, input$msf)) {
+                       mean_harvest <- pssp_at() |>
+                         filter(regulation_type_code %in% input$msf) |>
+                         rowwise() %>%
+                         mutate(total_retained_coho = across(starts_with('coho'), sum)) |>
+                         group_by(year, time_step, area_code, day_type) %>%
+                         summarize(
+                           total_retained_coho = sum(total_retained_coho),
+                           days = n(),
+                           .groups = 'drop'
+                         ) %>%
+                         # left_join(days_lut, by = c("year", "time_step", "area_code", "day_type")) |> 
+                         mutate(coho_per_day = total_retained_coho / days) %>%
+                         group_by(time_step, area_code, day_type) %>%
+                         summarize(mean_daily_harvest = mean(coho_per_day, na.rm = T),
+                                   .groups = 'drop') %>%
+                         pivot_wider(names_from = day_type, values_from  = mean_daily_harvest) %>%
+                         ungroup()
+                       
+                       
+                       
+                       
+                       wd_mean_harvest <- mean_harvest %>%
+                         .$WD
+                       
+                       we_mean_harvest <- mean_harvest %>%
+                         .$WE
+                       
+                       updateNumericInput(inputId = 'wend_hpd',
+                                          value = round(we_mean_harvest))
+                       
+                       updateNumericInput(inputId = 'wday_hpd',
+                                          value = round(wd_mean_harvest))
+                       
+                     } else {
+                       
+                       updateNumericInput(inputId = 'wday_df', value = saved_wday)
+                       updateNumericInput(inputId = 'wend_df', value = saved_wend)
+                       
+                       
+                       updateNumericInput(inputId = 'wend_hpd', value = saved_wend_h)
+                       updateNumericInput(inputId = 'wday_hpd', value = saved_wday_h)
+                       
+                       
+                       updateCheckboxGroupInput(inputId = 'years', selected = as.numeric(saved_years))
+                       updateCheckboxGroupInput(inputId = 'msf', selected = saved_regs)
+                       
+                       updateTextInput(inputId = 'rationale', value =  saved_ration)
+                       
+                     }
+                     
+                   } else {
                      mean_harvest <- pssp_at() |>
                        filter(regulation_type_code %in% input$msf) |>
                        rowwise() %>%
-                       mutate(total_retained_coho = across(starts_with('coho'), sum)) |>
+                       mutate(total_retained_coho = across(starts_with('coho'), \(x) sum(x))) |>
                        group_by(year, time_step, area_code, day_type) %>%
                        summarize(
                          total_retained_coho = sum(total_retained_coho),
+                         days = n(),
                          .groups = 'drop'
                        ) %>%
-                       left_join(days_lut, by = c("year", "time_step", "area_code", "day_type")) |> 
+                       # left_join(days_lut, by = c("year", "time_step", "area_code", "day_type")) |> 
                        mutate(coho_per_day = total_retained_coho / days) %>%
                        group_by(time_step, area_code, day_type) %>%
                        summarize(mean_daily_harvest = mean(coho_per_day, na.rm = T),
@@ -554,60 +648,12 @@ observeEvent(ignoreInit = TRUE,
                      we_mean_harvest <- mean_harvest %>%
                        .$WE
                      
-                     updateNumericInput(inputId = 'wend_hpd',
-                                        value = round(we_mean_harvest))
+                     updateNumericInput(inputId = 'wend_hpd', value = round(we_mean_harvest, 1))
                      
-                     updateNumericInput(inputId = 'wday_hpd',
-                                        value = round(wd_mean_harvest))
+                     updateNumericInput(inputId = 'wday_hpd', value = round(wd_mean_harvest, 1))
                      
-                   } else{
-                     
-                     updateNumericInput(inputId = 'wday_df', value = saved_wday)
-                     updateNumericInput(inputId = 'wend_df', value = saved_wend)
-                     
-                     
-                     updateNumericInput(inputId = 'wend_hpd', value = saved_wend_h)
-                     updateNumericInput(inputId = 'wday_hpd', value = saved_wday_h)
-                     
-                     
-                     updateCheckboxGroupInput(inputId = 'years', selected = as.numeric(saved_years))
-                     updateCheckboxGroupInput(inputId = 'msf', selected = saved_regs)
-                     
-                     updateTextInput(inputId = 'rationale', value =  saved_ration)
                      
                    }
-                   
-                 } else {
-                   mean_harvest <- pssp_at() |>
-                     filter(regulation_type_code %in% input$msf) |>
-                     rowwise() %>%
-                     mutate(total_retained_coho = across(starts_with('coho'), \(x) sum(x))) |>
-                     group_by(year, time_step, area_code, day_type) %>%
-                     summarize(
-                       total_retained_coho = sum(total_retained_coho),
-                       .groups = 'drop'
-                     ) %>%
-                     left_join(days_lut, by = c("year", "time_step", "area_code", "day_type")) |> 
-                     mutate(coho_per_day = total_retained_coho / days) %>%
-                     group_by(time_step, area_code, day_type) %>%
-                     summarize(mean_daily_harvest = mean(coho_per_day, na.rm = T),
-                               .groups = 'drop') %>%
-                     pivot_wider(names_from = day_type, values_from  = mean_daily_harvest) %>%
-                     ungroup()
-                   
-                   
-                   
-                   
-                   wd_mean_harvest <- mean_harvest %>%
-                     .$WD
-                   
-                   we_mean_harvest <- mean_harvest %>%
-                     .$WE
-                   
-                   updateNumericInput(inputId = 'wend_hpd', value = round(we_mean_harvest))
-                   
-                   updateNumericInput(inputId = 'wday_hpd', value = round(wd_mean_harvest))
-                   
                    
                  }
                  
@@ -721,14 +767,21 @@ observeEvent(ignoreInit = TRUE,
              })
 
 
-
-
-
 ```
 
 
 Controls {data-height=225}
 --------------------------------------------
+
+### Custom Strata
+```{r custom_strata}
+textInput("custom_start", label = "Custom Strata Start Date",
+          value = "2025-09-01", width = '100%')
+textInput("custom_end", label = "Custom Strata End Date",
+          value = "2025-09-30", width = '100%')
+
+actionButton(inputId = "run_custom", label = "Calculate Custom Strata")
+```
 
 ### Weekday assumptions
 ```{r wkday_sliders}
@@ -789,6 +842,7 @@ checkboxGroupInput("years", "Focal years", inline = T, width = '100%',
 
 observeEvent(
   ignoreInit = TRUE,
+  ignoreNULL = TRUE,
   input$select_all_years,
   {
     updateCheckboxGroupInput(inputId = 'years', selected = 2004:max(years_available))
@@ -798,6 +852,7 @@ observeEvent(
 
 observeEvent(
   ignoreInit = TRUE,
+  ignoreNULL = TRUE,
   input$select_recent_years,
   {
     updateCheckboxGroupInput(inputId = 'years', selected = tail(years_available, 6))
