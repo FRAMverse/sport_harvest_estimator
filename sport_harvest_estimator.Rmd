@@ -231,25 +231,39 @@ After reaching an acceptable input, the user enters a brief description of the r
 Coho kept
 ============================================
 
-Area-Timestep-Estimates {data-height=300}
---------------------------------------------
-
-### Area & Timestep
+Testing {.sidebar}
+-------------------------
 
 ```{r buttons}
 radioButtons("focal_area", label = "Focal Area",
              choices = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"), selected = "05", inline = T, width = '100%')
 
 radioButtons("focal_ts", label = "Focal Timestep",
-             choiceValues = c(1:5,-99), 
-             choiceNames = c(paste(1:5, c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":"), "Custom Strata"), 
+             choiceValues = c(1:5), 
+             choiceNames = c(paste(1:5, c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":")), 
              selected = 4, inline = T, width = '100%')
+
+checkboxInput("use_custom_strata",
+              label = "Use custom time period",
+              value = FALSE)
+
+textInput("custom_start", label = "Custom Strata Start Date (MM-DD format)",
+          value = "09-01", width = '100%')
+textInput("custom_end", label = "Custom Strata End Date (MM-DD format)",
+          value = "09-30", width = '100%')
+actionButton(inputId = "run_custom", label = "Recalculate Custom Strata")
 
 checkboxGroupInput("msf", label = "Regulation",
                    choices = c('NS', 'MSF'), 
                    selected = c('NS','MSF'), inline = T, width = '100%')
 
 ```
+
+Area-Timestep-Estimates {data-height=350}
+--------------------------------------------
+
+<!-- ### Area & Timestep -->
+
 
 ### Harvest estimates
 
@@ -275,17 +289,7 @@ renderValueBox({
 
 ```
 
-### Custom Strata: mean daily harvest for custom dates
-
-Only used if "Focal Timestep" is set to "Custom Strata". Press button to calculate.
-
-```{r custom_strata}
-textInput("custom_start", label = "Custom Strata Start Date (MM-DD format)",
-          value = "09-01", width = '100%')
-textInput("custom_end", label = "Custom Strata End Date (MM-DD format)",
-          value = "09-30", width = '100%')
-actionButton(inputId = "run_custom", label = "Calculate Custom Strata")
-```
+<!-- ### Day Calculator & Custom Strata -->
 
 
 <!-- ### Output -->
@@ -298,10 +302,8 @@ actionButton(inputId = "run_custom", label = "Calculate Custom Strata")
 
 <!-- ``` -->
 
-
-
-
 ```{r keeper, echo=F}
+
 observeEvent(
   input$keep,{
     est_row <- data.frame(
@@ -352,7 +354,7 @@ observeEvent(
 
 pssp_at <- reactive({
   # no base period area 12 for july, add july to august
-  if(input$focal_ts != -99){
+  if(!input$use_custom_strata){
     filter(pssp, 
            area_code == input$focal_area,
            time_step == input$focal_ts, 
@@ -427,19 +429,20 @@ observeEvent(ignoreInit = TRUE,
                input$focal_ts,
                input$years,
                input$msf,
-               input$run_custom),
+               input$run_custom,
+               input$use_custom_strata),
              {
                ## catching date issues for custom strata
-               if(input$focal_ts == -99 & 
+               if(input$use_custom_strata & 
                   any(is.na(as_date(paste0("2020-",c(input$custom_start, input$custom_end)))))
                ){
                  showModal(
                    modalDialog(
                      title = 'Dates not workable',
-                     'Custom strata dates are not readable. Use format MM-DD'
+                     'Custom strata dates are not readable. Use format MM-DD.'
                    )
                  )
-                 updateRadioButtons(inputId = 'focal_ts', selected = 4)
+                 updateCheckboxInput(inputId = 'use_custom_strata', value = FALSE)
                } else {
                  
                  # catch a corner case, if user input doesn't have fisheries to
@@ -467,7 +470,7 @@ observeEvent(ignoreInit = TRUE,
                    #   rename(area_code = catch_area_code) |> 
                    #   pivot_longer(WD:WE, values_to = "days", names_to = "day_type")
                    
-                   if(input$focal_ts != -99){ ## normal timesteps
+                   if(!input$use_custom_strata){ ## normal timesteps
                      updateTextInput(inputId = 'start_date', 
                                      value = 
                                        ts_lut |> 
@@ -479,6 +482,21 @@ observeEvent(ignoreInit = TRUE,
                                        ts_lut |> 
                                        filter(time_step == input$focal_ts) |> 
                                        pull(end_date)
+                     )
+                     ## updating custom vals
+                     updateTextInput(inputId = 'custom_start', 
+                                     value = 
+                                       ts_lut |> 
+                                       filter(time_step == input$focal_ts) |> 
+                                       pull(start_date) |> 
+                                       gsub("^(.*?)-", "", x = _)
+                     )
+                     updateTextInput(inputId = 'custom_end', 
+                                     value = 
+                                       ts_lut |> 
+                                       filter(time_step == input$focal_ts) |> 
+                                       pull(end_date) |> 
+                                       gsub("^(.*?)-", "", x = _)
                      )
                    }
                    
@@ -717,11 +735,93 @@ observeEvent(ignoreInit = TRUE,
 ```
 
 
+
+
 Controls {data-height=300}
 --------------------------------------------
 
-### Day Calculator
 
+
+### Weekday assumptions
+```{r wkday_sliders}
+
+
+
+numericInput("wday_df", label = "Weekday Days fished",
+             min = 0, max = 365, value = 20, step = 1, width = '100%')
+
+# numericInput("wday_apd", label = "Weekday Anglers per day",
+#             min = 0, max = 2000, value = 0, step = 5, width = '100%')
+
+numericInput("wday_hpd", label = "Mean Weekday Day Harvest",
+             min = 0, max = 4, value = 0, step = 0.01, width = '100%')
+
+wday_harvest <- reactive({
+  input$wday_df * input$wday_hpd
+})
+
+```
+
+### Weekend assumptions
+
+```{r wkend_sliders}
+numericInput("wend_df", label = "Weekend Days fished",
+             min = 0, max = 365, value = 20, step = 1, width = '100%')
+
+# numericInput("wend_apd", label = "Weekend Anglers per day",
+#             min = 0, max = 2000, value = 0, step = 5,  width = '100%')
+
+numericInput("wend_hpd", label = "Mean Weekend Day Harvest",
+             min = 0, max = 4, value = 0, step = 0.01,  width = '100%')
+
+wend_harvest <- reactive({
+  input$wend_df * input$wend_hpd
+})
+
+
+```
+
+
+```{r update_days_custom}
+observeEvent(c(input$use_custom_strata,
+               input$run_custom),{
+                 if(input$use_custom_strata){
+                   cur_year = format(Sys.Date(), "%Y")
+                   days.per.ts = tibble(
+                     date = seq(as_date(paste0(cur_year, "-", input$custom_start)), 
+                                as_date(paste0(cur_year, "-", input$custom_end)),
+                                by = 'day'),
+                     day_type = if_else(
+                       lubridate::wday(date, label = T) %in% c('Fri', 'Sat', 'Sun'),
+                       'WE',
+                       'WD'
+                     )
+                   ) |>
+                     mutate(
+                       day_type = if_else(is_holiday_weekend(date), 'WE', day_type),
+                       year = lubridate::year(date),
+                       time_step = case_match(lubridate::month(date),
+                                              1:6 ~ 1,
+                                              7 ~ 2,
+                                              8 ~ 3,
+                                              9 ~ 4,
+                                              10:12 ~ 5)
+                     ) |>
+                     count(year, time_step, day_type) |>
+                     pivot_wider(names_from = day_type, values_from = n) |> 
+                     mutate(year = as.character(year),
+                            time_step = as.character(time_step))
+                   if(nrow(days.per.ts) == 1){
+                     updateNumericInput(inputId = "wday_df", value = days.per.ts$WD)
+                     updateNumericInput(inputId = "wend_df", value = days.per.ts$WE)
+                   }
+                 } 
+               })
+```
+
+
+
+### Day Calculator
 
 ```{r}
 cur_year = format(Sys.Date(), "%Y")
@@ -785,47 +885,6 @@ renderTable({
 })
 
 ```
-
-### Weekday assumptions
-```{r wkday_sliders}
-
-
-
-numericInput("wday_df", label = "Weekday Days fished",
-             min = 0, max = 365, value = 20, step = 1, width = '100%')
-
-# numericInput("wday_apd", label = "Weekday Anglers per day",
-#             min = 0, max = 2000, value = 0, step = 5, width = '100%')
-
-numericInput("wday_hpd", label = "Mean Weekday Day Harvest",
-             min = 0, max = 4, value = 0, step = 0.01, width = '100%')
-
-wday_harvest <- reactive({
-  input$wday_df * input$wday_hpd
-})
-
-```
-
-### Weekend assumptions
-
-```{r wkend_sliders}
-numericInput("wend_df", label = "Weekend Days fished",
-             min = 0, max = 365, value = 20, step = 1, width = '100%')
-
-# numericInput("wend_apd", label = "Weekend Anglers per day",
-#             min = 0, max = 2000, value = 0, step = 5,  width = '100%')
-
-numericInput("wend_hpd", label = "Mean Weekend Day Harvest",
-             min = 0, max = 4, value = 0, step = 0.01,  width = '100%')
-
-wend_harvest <- reactive({
-  input$wend_df * input$wend_hpd
-})
-
-
-```
-
-
 
 
 
@@ -902,15 +961,14 @@ renderPlot({
   
   
   time_label = case_when(input$focal_ts == 1 ~ "1: Jan-Jun",
-                          input$focal_ts == 2 ~ "2: Jul", 
-                          input$focal_ts == 3 ~ "3: Aug",
-                          input$focal_ts == 4 ~ "4: Sep",
-                          input$focal_ts == 5 ~ "5: Oct-Dec", 
-                          input$focal_ts == -99 ~ paste0("Custom Strata: ",
-                                                         input$custom_start,
-                                                         " to ", 
-                                                         input$custom_end)
+                         input$focal_ts == 2 ~ "2: Jul", 
+                         input$focal_ts == 3 ~ "3: Aug",
+                         input$focal_ts == 4 ~ "4: Sep",
+                         input$focal_ts == 5 ~ "5: Oct-Dec"
   )
+  if(input$use_custom_strata){
+    time_label = paste0("Custom Strata: ", input$custom_start, " to ", input$custom_end)
+  }
   
   fram_ests %>%
     ggplot(aes(yr_type, val, fill = var)) +
