@@ -77,8 +77,8 @@ pal_m <- set_names(
     "#E9DB87", "#FFE56C"), month.abb)
 
 pal_ts <- set_names(
-   c("#D2A554", "#626B5D", "#8C8F9E", "#858753", "#A4BADF"),
-   paste(1:5, c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":")
+  c("#D2A554", "#626B5D", "#8C8F9E", "#858753", "#A4BADF"),
+  paste(1:5, c("Jan-Jun","Jul","Aug","Sep","Oct-Dec"), sep = ":")
 )
 
 # this is on someone's personal computer 
@@ -117,6 +117,7 @@ if (on_web_server){
   # pull necessary tables and view
   
   # puget sound creel information merged to regulation
+  # view in the access database that bins catch by regs
   pssp <- DBI::dbReadTable(con, 'vw_estimates_by_regulation')
   
   
@@ -127,8 +128,20 @@ if (on_web_server){
   # compilation of FRAM parameters from post-season and pre-season databases
   fs_ps_spt <- DBI::dbReadTable(con, 'coho_fram')
   
+  holidays <- read_csv(
+    'https://www.federalpay.org/resources/holidays/Federal%20Holidays%20-%20all.csv'
+  ) |>
+    janitor::clean_names() |>
+    mutate(date = lubridate::as_date(observed_date, format = '%B %d, %Y'),
+           holiday = TRUE) |>
+    select(date, holiday)
+  
   # disconnect from database
   DBI::dbDisconnect(con)
+  
+  ## save the key pieces to an Rdata file for future use.
+  save(list = c("pssp", "regs", "fs_ps_spt", "holidays"),
+       file = 'sport_harvest_estimator.RData')
 }
 
 #rm(con)
@@ -151,7 +164,7 @@ daily_regs <- regs %>%
       lubridate::month(date)  == 8 ~ 3L,
       lubridate::month(date)  == 9 ~ 4L,
       lubridate::month(date) %in% c(10, 11, 12) ~ 5L
-      ),
+    ),
     year = lubridate::year(date)
   )
 
@@ -173,7 +186,12 @@ reg_days <- daily_regs %>%
   count(catch_area_code, year, time_step, day_type) %>%
   pivot_wider(names_from = day_type, values_from =n)
 
+reg_days_bytype <- daily_regs %>% ##CBE addition
+  count(catch_area_code, regulation_type_code, year, time_step, day_type) %>%
+  pivot_wider(names_from = day_type, values_from = n)
 
+## find available years for easier automation of Year selection
+years_available = sort(unique(pssp$year))
 ```
 
 About
@@ -215,8 +233,8 @@ radioButtons("focal_ts", label = "Focal Timestep",
              selected = 4, inline = T, width = '100%')
 
 checkboxGroupInput("msf", label = "Regulation",
-             choices = c('NS', 'MSF'), 
-             selected = c('NS','MSF'), inline = T, width = '100%')
+                   choices = c('NS', 'MSF'), 
+                   selected = c('NS','MSF'), inline = T, width = '100%')
 
 
 
@@ -229,20 +247,20 @@ renderValueBox({
   valueBox(
     value = paste0("Weekday: ", round(wday_harvest()), " harvest"),
     icon = "fa-fish")
-  })
+})
 
 renderValueBox({
   valueBox(
     value = paste0("Weekend: ", round(wend_harvest()), " harvest"),
     icon = "fa-fish")
-  })
+})
 
 renderValueBox({
   valueBox(
     value = paste0("Total: ",
                    round(wday_harvest()+wend_harvest()), " harvest"),
     icon = "fa-fish")
-  })
+})
 
 ```
 
@@ -256,42 +274,109 @@ actionButton("keep", label = "Keep estimates")
 
 ```
 
+### Day Calculator
+
+```{r}
+cur_year = format(Sys.Date(), "%Y")
+ts_lut = tribble(
+  ~ time_step, ~start_date, ~end_date,
+  2, paste0(cur_year, "-7-1"), paste0(cur_year, "-7-31"),
+  3, paste0(cur_year, "-8-1"), paste0(cur_year, "-8-31"),
+  4, paste0(cur_year, "-9-1"), paste0(cur_year, "-9-30"),
+  5, paste0(cur_year, "-10-1"), paste0(cur_year, "-12-31"),
+  1, paste0(as.numeric(cur_year)+1, "-1-1"), paste0(as.numeric(cur_year)+1, "-4-30")
+) |> 
+  mutate(start_date = as_date(start_date),
+         end_date = as_date(end_date))
+
+
+textInput("start_date", label = "Start Date",
+          value = "", width = '100%')
+textInput("end_date", label = "End Date",
+          value = "", width = '100%')
+
+
+
+
+
+
+## calculate weekend and weekdays
+# input$start_date input$end_date
+days_spanned = reactive({
+  if(all(!is.na(as_date(c(input$start_date, input$end_date))))){
+    days.per.ts = tibble(
+      date = seq(as_date(input$start_date), as_date(input$end_date), by = 'day'),
+      day_type = if_else(
+        lubridate::wday(date, label = T) %in% c('Fri', 'Sat', 'Sun'),
+        'WE',
+        'WD'
+      )
+    ) |>
+      left_join(holidays) |> # auguement monday + holday = WE
+      mutate(
+        day_type = if_else(lubridate::wday(date, label = T) == 'Mon' & !is.na(holiday), 'WE', day_type),
+        year = lubridate::year(date),
+        time_step = case_match(lubridate::month(date),
+                               1:6 ~ 1,
+                               7 ~ 2,
+                               8 ~ 3,
+                               9 ~ 4,
+                               10:12 ~ 5)
+      ) |>
+      count(year, time_step, day_type) |>
+      pivot_wider(names_from = day_type, values_from = n) |> 
+      mutate(year = as.character(year),
+             time_step = as.character(time_step))
+    
+  } else {
+    data.frame(Dates = "one or more dates is not legal")
+  }
+  
+})
+
+renderTable({
+  days_spanned()
+})
+
+```
+
+
 ```{r keeper, echo=F}
 observeEvent(
   input$keep,{
-  est_row <- data.frame(
-     area_code = input$focal_area,
-     timestep = input$focal_ts,
-     est = wday_harvest()+wend_harvest(),
-     years = paste0(input$years, collapse = ','),
-     reg = paste0(input$msf, collapse = ','),
-     wday_df = input$wday_df, wend_df = input$wend_df,
-     wday_hpd = input$wday_hpd, wend_hpd = input$wend_hpd,
-     rationale = input$rationale
-     )
-  
-  if (on_web_server){
-    # pull df out of mongo
-    est <- user_ests$find()
+    est_row <- data.frame(
+      area_code = input$focal_area,
+      timestep = input$focal_ts,
+      est = wday_harvest()+wend_harvest(),
+      years = paste0(input$years, collapse = ','),
+      reg = paste0(input$msf, collapse = ','),
+      wday_df = input$wday_df, wend_df = input$wend_df,
+      wday_hpd = input$wday_hpd, wend_hpd = input$wend_hpd,
+      rationale = input$rationale
+    )
     
-    # insert modified df
-    est_insert <- rows_update(est, est_row, by = c("area_code", "timestep"))
+    if (on_web_server){
+      # pull df out of mongo
+      est <- user_ests$find()
+      
+      # insert modified df
+      est_insert <- rows_update(est, est_row, by = c("area_code", "timestep"))
+      
+      #remove previous data
+      user_ests$remove('{}')
+      
+      #put new data in 
+      user_ests$insert(est_insert)
+      
+    } else {
+      # if not a webserver use local
+      out$est <- rows_update(out$est, est_row, by = c("area_code", "timestep"))
+    }
     
-    #remove previous data
-    user_ests$remove('{}')
+    updateTextInput(inputId = 'rationale', value = '')
+    showNotification('Input saved', type = 'message')
     
-    #put new data in 
-    user_ests$insert(est_insert)
-    
-  } else {
-    # if not a webserver use local
-    out$est <- rows_update(out$est, est_row, by = c("area_code", "timestep"))
-  }
-
-  updateTextInput(inputId = 'rationale', value = '')
-  showNotification('Input saved', type = 'message')
-   
-})
+  })
 
 
 ```
@@ -314,11 +399,11 @@ pssp_at <- reactive({
 })
 
 fram_at <- reactive({
-    filter(fs_ps_spt,
+  filter(fs_ps_spt,
          area_code == input$focal_area, 
          ts == input$focal_ts, 
          yr %in% input$years
-    )
+  )
 }) 
 
 recent_regs_at <- reactive({
@@ -332,6 +417,11 @@ regs_at <- reactive({
          time_step == input$focal_ts)
 })
 
+regs_bytype_at <- reactive({
+  filter(reg_days_bytype, catch_area_code == input$focal_area, 
+         time_step == input$focal_ts)
+})
+
 # next year move some of these filters to the individual charts / whatever code
 # likely losing performance as-is
 pssp_all_years <- reactive({
@@ -342,10 +432,10 @@ pssp_all_years <- reactive({
 })
 
 fram_all_years <- reactive({
-    filter(fs_ps_spt,
+  filter(fs_ps_spt,
          area_code == input$focal_area, 
          ts == input$focal_ts
-    )
+  )
 }) 
 
 ```
@@ -379,6 +469,30 @@ observeEvent(ignoreInit = TRUE,
                  updateCheckboxGroupInput(inputId = 'msf', selected = c('NS', 'MSF'))
                  updateCheckboxGroupInput(inputId = 'years', selected = 2003:2024)
                } else {
+                 
+                 ## For calculating days based on regs
+                 days_lut <- regs_bytype_at() |>
+                   filter(regulation_type_code %in% input$msf) |> 
+                   group_by(catch_area_code, year, time_step) |> 
+                   summarize(WD = sum(WD),
+                             WE = sum(WE), 
+                             .groups = 'drop') |> 
+                   rename(area_code = catch_area_code) |> 
+                   pivot_longer(WD:WE, values_to = "days", names_to = "day_type")
+                 
+                 updateTextInput(inputId = 'start_date', 
+                                 value = 
+                                   ts_lut |> 
+                                   filter(time_step == input$focal_ts) |> 
+                                   pull(start_date)
+                 )
+                 updateTextInput(inputId = 'end_date', 
+                                 value = 
+                                   ts_lut |> 
+                                   filter(time_step == input$focal_ts) |> 
+                                   pull(end_date)
+                 )
+                 
                  if (on_web_server) {
                    saved_input <- user_ests$find(
                      glue::glue(
@@ -411,7 +525,7 @@ observeEvent(ignoreInit = TRUE,
                    saved_regs <- strsplit(saved_regs, ",")[[1]]
                    
                    saved_ration <- saved_input %>%
-                      .$rationale
+                     .$rationale
                    
                    if (length(saved_years) == 0 | !setequal(saved_years, input$years) | !setequal(saved_regs, input$msf)) {
                      mean_harvest <- pssp_at() |>
@@ -421,9 +535,9 @@ observeEvent(ignoreInit = TRUE,
                        group_by(year, time_step, area_code, day_type) %>%
                        summarize(
                          total_retained_coho = sum(total_retained_coho),
-                         days = n(),
                          .groups = 'drop'
                        ) %>%
+                       left_join(days_lut, by = c("year", "time_step", "area_code", "day_type")) |> 
                        mutate(coho_per_day = total_retained_coho / days) %>%
                        group_by(time_step, area_code, day_type) %>%
                        summarize(mean_daily_harvest = mean(coho_per_day, na.rm = T),
@@ -467,13 +581,13 @@ observeEvent(ignoreInit = TRUE,
                    mean_harvest <- pssp_at() |>
                      filter(regulation_type_code %in% input$msf) |>
                      rowwise() %>%
-                     mutate(total_retained_coho = across(starts_with('coho'), sum)) |>
+                     mutate(total_retained_coho = across(starts_with('coho'), \(x) sum(x))) |>
                      group_by(year, time_step, area_code, day_type) %>%
                      summarize(
                        total_retained_coho = sum(total_retained_coho),
-                       days = n(),
                        .groups = 'drop'
                      ) %>%
+                     left_join(days_lut, by = c("year", "time_step", "area_code", "day_type")) |> 
                      mutate(coho_per_day = total_retained_coho / days) %>%
                      group_by(time_step, area_code, day_type) %>%
                      summarize(mean_daily_harvest = mean(coho_per_day, na.rm = T),
@@ -506,7 +620,7 @@ observeEvent(ignoreInit = TRUE,
 # application supplied weekend/weekdays
 observeEvent(ignoreInit = TRUE,
              c(input$focal_area, input$focal_ts), {
-
+               
                
                # # pull from database if there is a data saved
                # if (on_web_server) {
@@ -592,19 +706,19 @@ observeEvent(ignoreInit = TRUE,
                #   updateNumericInput(inputId = 'wend_df', value = we_days)
                # }
                
-                 wd_days <- recent_regs_at() %>%
-                   # calculate most recent regulation weekdays
-                   .$WD
-                 
-                 updateNumericInput(inputId = 'wday_df', value = wd_days)
-                 
-                 
-                 we_days <- recent_regs_at() %>%
-                   .$WE
-                 
-                 updateNumericInput(inputId = 'wend_df', value = we_days)
+               wd_days <- recent_regs_at() %>%
+                 # calculate most recent regulation weekdays
+                 .$WD
                
-})
+               updateNumericInput(inputId = 'wday_df', value = wd_days)
+               
+               
+               we_days <- recent_regs_at() %>%
+                 .$WE
+               
+               updateNumericInput(inputId = 'wend_df', value = we_days)
+               
+             })
 
 
 
@@ -622,13 +736,13 @@ Controls {data-height=225}
 
 
 numericInput("wday_df", label = "Weekday Days fished",
-            min = 0, max = 365, value = 20, step = 1, width = '100%')
+             min = 0, max = 365, value = 20, step = 1, width = '100%')
 
 # numericInput("wday_apd", label = "Weekday Anglers per day",
 #             min = 0, max = 2000, value = 0, step = 5, width = '100%')
 
 numericInput("wday_hpd", label = "Mean Weekday Day Harvest",
-            min = 0, max = 4, value = 0, step = 0.01, width = '100%')
+             min = 0, max = 4, value = 0, step = 0.01, width = '100%')
 
 wday_harvest <- reactive({
   input$wday_df * input$wday_hpd
@@ -640,13 +754,13 @@ wday_harvest <- reactive({
 
 ```{r wkend_sliders}
 numericInput("wend_df", label = "Weekend Days fished",
-            min = 0, max = 365, value = 20, step = 1, width = '100%')
+             min = 0, max = 365, value = 20, step = 1, width = '100%')
 
 # numericInput("wend_apd", label = "Weekend Anglers per day",
 #             min = 0, max = 2000, value = 0, step = 5,  width = '100%')
 
 numericInput("wend_hpd", label = "Mean Weekend Day Harvest",
-            min = 0, max = 4, value = 0, step = 0.01,  width = '100%')
+             min = 0, max = 4, value = 0, step = 0.01,  width = '100%')
 
 wend_harvest <- reactive({
   input$wend_df * input$wend_hpd
@@ -671,23 +785,23 @@ actionLink('select_recent_years', 'Select Recent 6 years')
 checkboxGroupInput("years", "Focal years", inline = T, width = '100%',
                    choices = 2004:2024,
                    selected = 2004:2024# don't hardcode next year, next year is here and i still hardcoded it bahaha!!!hardcoded 2025!!!!!!!!!
-                   )
+)
 
 observeEvent(
   ignoreInit = TRUE,
   input$select_all_years,
   {
-    updateCheckboxGroupInput(inputId = 'years', selected = 2004:2024)
+    updateCheckboxGroupInput(inputId = 'years', selected = 2004:max(years_available))
     
-    }
+  }
 )
 
 observeEvent(
   ignoreInit = TRUE,
   input$select_recent_years,
   {
-    updateCheckboxGroupInput(inputId = 'years', selected = 2018:2024)
-    }
+    updateCheckboxGroupInput(inputId = 'years', selected = tail(years_available, 6))
+  }
 )
 
 ```
@@ -702,7 +816,7 @@ renderPlot({
   fram_ests <- pssp_at() |>
     filter(regulation_type_code %in% input$msf) |>
     group_by(year, time_step, area_code, source) |>
-    summarize(across(starts_with('coho'), sum, na.rm=T), .groups = 'drop') |>
+    summarize(across(starts_with('coho'), \(x) sum(x, na.rm = T)), .groups = 'drop') |>
     rowwise() |>
     mutate(
       # apportion unk mark-status to ad/um for retention
@@ -762,7 +876,7 @@ renderPlot({
     filter(regulation_type_code %in% input$msf,
            year >= 2010) |>
     group_by(year, time_step, area_code, source) |>
-    summarize(across(starts_with('coho'), sum, na.rm=T), .groups = 'drop') |>
+    summarize(across(starts_with('coho'), \(x) sum(x, na.rm=T)), .groups = 'drop') |>
     rowwise() |>
     mutate(
       # apportion unk mark-status to ad/um for retention
@@ -886,16 +1000,16 @@ renderPlot({
 renderPlot({
   day_plot <- pssp_at() |>
     filter(regulation_type_code %in% input$msf) |>
-      mutate(
-        # take care of NA's
-        across(starts_with('coho'), ~replace_na(.x, 0)),
-        # apportion unk mark-status to ad/um for retention
-        coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / (coho_104_ad_ret + coho_104_um_ret ))),
-        coho_ad_k = replace_na(coho_104_ad_ret, 0),
-        coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret /  (coho_104_ad_ret + coho_104_um_ret ))),
-        coho_um_k = replace_na(coho_104_um_ret, 0),
-        total_retained_coho = coho_ad_k + coho_um_k
-      )
+    mutate(
+      # take care of NA's
+      across(starts_with('coho'), ~replace_na(.x, 0)),
+      # apportion unk mark-status to ad/um for retention
+      coho_ad_k = coho_104_ad_ret + (coho_104_uk_ret  * (coho_104_ad_ret / (coho_104_ad_ret + coho_104_um_ret ))),
+      coho_ad_k = replace_na(coho_104_ad_ret, 0),
+      coho_um_k = coho_104_um_ret + (coho_104_uk_ret * (coho_104_um_ret /  (coho_104_ad_ret + coho_104_um_ret ))),
+      coho_um_k = replace_na(coho_104_um_ret, 0),
+      total_retained_coho = coho_ad_k + coho_um_k
+    )
   
   day_plot |> 
     ggplot(aes(factor(year), total_retained_coho, fill = day_type)) +
@@ -907,8 +1021,8 @@ renderPlot({
     ) + 
     theme(
       text = element_text(size = 20)
-      )
-    
+    )
+  
 })
 ```
 
@@ -935,7 +1049,7 @@ renderPlot({
   mean_harvest_plot |> 
     ggplot(aes(factor(year), mean_est, fill = regulation_type_code, group=mean_est)) +
     geom_col(position = position_dodge(), alpha=0.8) +
-    geom_hline( yintercept = input_mean) +
+    geom_hline(yintercept = input_mean) +
     labs(
       subtitle = paste("Area", input$focal_area, "during", paste(input$focal_ts, collapse = ",")),
       y = 'Mean Coho Harvest Per Day',
@@ -943,8 +1057,8 @@ renderPlot({
     ) +
     theme(
       text = element_text(size = 20)
-      )
-    
+    )
+  
 })
 
 
@@ -958,7 +1072,7 @@ renderPlot({
 ### Historical Days Open
 ```{r regs_table}
 renderTable({
-  regs_at() %>%
+  regs_bytype_at() %>%
     mutate(total_days = WE + WD) %>%
     arrange(-year) %>%
     mutate(year = as.character(year))
@@ -1031,9 +1145,9 @@ if (on_web_server) {
 
 ```{css est_table}
 #section-saved-inputs
-  .chart-shim {
-    overflow-y: scroll;
-    }
+.chart-shim {
+overflow-y: scroll;
+}
 ```
 
 <!-- ### Load Saved Inputs -->
