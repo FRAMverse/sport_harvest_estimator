@@ -90,6 +90,34 @@ daily_estimates_fisheries_no_catch <- pssp %>%
 DBI::dbWriteTable(con, "coho_estimates", daily_estimates_fisheries_no_catch, overwrite = T)
 DBI::dbDisconnect(con)
 
+cli::cli_alert("Check coverage of `pssp`: did we update everything we meant to?")
+pssp |> 
+  group_by(area_code) |> 
+  filter(year == max(year)) |> 
+  mutate(month = month(as_date(date))) |> 
+  group_by(area_code, year, month) |> 
+  summarize(n = n()) |> 
+  ungroup() |> 
+  arrange(month) |> 
+  pivot_wider(names_from = month, values_from = n,
+              names_prefix = "mo_") 
+cli::cli_alert("Check these! Are we missing data we're expecting?")
+
+cli::cli_alert("creel only!")
+pssp |> 
+  filter(source == "CREEL") |> 
+  group_by(area_code) |> 
+  filter(year == max(year)) |> 
+  mutate(month = month(as_date(date))) |> 
+  group_by(area_code, year, month) |> 
+  summarize(n = n()) |> 
+  ungroup() |> 
+  arrange(month) |> 
+  pivot_wider(names_from = month, values_from = n,
+              names_prefix = "mo_") 
+cli::cli_alert("Check these! Are we missing data we're expecting?")
+
+
 rm('con', 'fisheries_no_catch', 'no_catch_no_estimate', 'pssp', 'regs')
 
 

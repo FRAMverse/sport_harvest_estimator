@@ -23,9 +23,6 @@ library("tidyverse")
 library("shiny")
 library("patchwork")
 library("gt")
-library(lubridate)
-
-
 
 ```
 
@@ -247,11 +244,11 @@ checkboxInput("use_custom_strata",
               label = "Use custom time period",
               value = FALSE)
 
-textInput("custom_start", label = "Custom Strata Start Date (MM-DD format)",
+textInput("custom_start", label = "Custom Start Date\n(MM-DD format)",
           value = "09-01", width = '100%')
-textInput("custom_end", label = "Custom Strata End Date (MM-DD format)",
+textInput("custom_end", label = "Custom End Date\n(MM-DD format)",
           value = "09-30", width = '100%')
-actionButton(inputId = "run_custom", label = "Recalculate Custom Strata")
+actionButton(inputId = "run_custom", label = "Recalculate custom time period")
 
 checkboxGroupInput("msf", label = "Regulation",
                    choices = c('NS', 'MSF'), 
@@ -270,37 +267,34 @@ Area-Timestep-Estimates {data-height=350}
 ```{r valuebox}
 renderValueBox({
   valueBox(
-    value = paste0("Weekday: ", round(wday_harvest()), " harvest"),
+    value = paste0("Weekday: ", format(round(wday_harvest()), big.mark = ","), " harvest"),
     icon = "fa-fish")
 })
 
 renderValueBox({
   valueBox(
-    value = paste0("Weekend: ", round(wend_harvest()), " harvest"),
+    value = paste0("Weekend: ", format(round(wend_harvest()), big.mark = ","), " harvest"),
     icon = "fa-fish")
 })
 
 renderValueBox({
   valueBox(
     value = paste0("Total: ",
-                   round(wday_harvest()+wend_harvest()), " harvest"),
+                   format(round(wday_harvest()+wend_harvest()), big.mark = ","), " harvest"),
     icon = "fa-fish")
 })
 
 ```
 
-<!-- ### Day Calculator & Custom Strata -->
+### Output
+
+```{r keep_dl_buttons}
 
 
-<!-- ### Output -->
+textInput("rationale", label = "Rationale")
+actionButton("keep", label = "Keep estimates")
 
-<!-- ```{r keep_dl_buttons} -->
-
-
-<!-- textInput("rationale", label = "Rationale") -->
-<!-- actionButton("keep", label = "Keep estimates") -->
-
-<!-- ``` -->
+```
 
 ```{r keeper, echo=F}
 
@@ -967,7 +961,7 @@ renderPlot({
                          input$focal_ts == 5 ~ "5: Oct-Dec"
   )
   if(input$use_custom_strata){
-    time_label = paste0("Custom Strata: ", input$custom_start, " to ", input$custom_end)
+    time_label = paste0("Custom time period: ", input$custom_start, " to ", input$custom_end)
   }
   
   fram_ests %>%
