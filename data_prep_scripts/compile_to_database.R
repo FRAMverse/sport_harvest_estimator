@@ -24,3 +24,5 @@ DBI::dbDisconnect(con)
 
 # fisheries where there are no estimates of catch are 0's
 source(here::here('data_prep_scripts/coho_na_to_zero_fisheries_no_catch.R'))
+# derbies
+source(here::here('data_prep_scripts/coho_derbies.R'))

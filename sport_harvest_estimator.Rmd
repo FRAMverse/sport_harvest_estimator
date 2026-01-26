@@ -975,7 +975,8 @@ renderPlot({
       "Quota" = "#D2A554",
       "MSFQuota" = "#A4BADF",
       "CRC" = "#04a43c",
-      "CREEL" = "#014218"
+      "CREEL" = "#014218",
+      "DERBY" = "#ccf027"
     )) +
     labs(
       subtitle = paste("Area", input$focal_area, "during", time_label)
