@@ -892,8 +892,8 @@ actionLink('select_all_years', 'Select All')
 actionLink('select_recent_years', 'Select Recent 6 years')
 
 checkboxGroupInput("years", "Focal years", inline = T, width = '100%',
-                   choices = 2004:2024,
-                   selected = 2004:2024# don't hardcode next year, next year is here and i still hardcoded it bahaha!!!hardcoded 2025!!!!!!!!!
+                   choices = 2004:2025,
+                   selected = 2004:2025# don't hardcode next year, next year is here and i still hardcoded it bahaha!!!hardcoded 2025!!!!!!!!!
 )
 
 observeEvent(
