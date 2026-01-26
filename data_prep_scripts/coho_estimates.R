@@ -9,7 +9,7 @@ library(tidyverse)
 print('### Intestive creel ###')
 
 print('Loading daily intensive creel estimate file')
-intense_creel <- read_csv(here::here('data/sources/daily_coho_intensive.csv')) %>%
+intense_creel <- read_csv(here::here('data/sources/daily_coho_intensive_1.26.2026.csv')) %>%
   janitor::clean_names() %>%
   filter(area != '61') %>% # <-- Area 61 should be better covered by the coho directed estimates (A6)
   select(-x1, -study_code)
