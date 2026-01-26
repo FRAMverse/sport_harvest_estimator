@@ -8,7 +8,7 @@ source(here::here('data_prep_scripts/coho_estimates.R'))
 
 
 # comments on the data associated with this update
-comment <- 'Fixing missing Area 11 data'
+comment <- 'update for 2025 / 2026 pre-season'
 
 # save to sqlite database
 con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
