@@ -16,7 +16,6 @@ con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator
 # puget sound creel information merged to regulation
 pssp <- DBI::dbReadTable(con, 'vw_estimates_by_regulation')
 
-
 # puget sound creel information merged to regulation
 regs <- DBI::dbReadTable(con, 'coho_regulations')
 

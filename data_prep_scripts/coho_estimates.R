@@ -34,7 +34,7 @@ print('Filling in missing days in CRCs with 0s')
 
 all_area_days <- expand_grid(
   area = c("05", "06", "07", "09", "10", "11", "12", "13", "81", "82"),
-  date = seq(as.Date('2002-01-01'), as.Date('2024-03-31'), by ='day'),
+  date = seq(as.Date('2002-01-01'), as.Date('2025-03-31'), by ='day'),
   species = 'Coho',
   fish = 0
 )

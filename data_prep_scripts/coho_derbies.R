@@ -5,6 +5,7 @@
 
 cli::cli_alert_info('Adding derbies...')
 
+
 derbies <- readxl::read_excel(here::here('data/sources/derbies.xlsx'), sheet = 'data')
 
 # translate to daily, wrangle
@@ -35,7 +36,7 @@ derby_db <- derbies |>
         !is_holiday_weekend(date), 'WD', 'WE'), # is_holiday... lives in coho_estimates.r
     source = 'DERBY'
   ) |>
-  select(area_code, date, time_step, day_type, starts_with('coho_'), source)
+  select(area_code, date, year, time_step, day_type, starts_with('coho_'), source)
 
 # check for error
 original_sum <- derbies |>
@@ -54,6 +55,7 @@ if(original_sum != mutated_sum){
 } else {
   # APPEND into database
   con <- DBI::dbConnect(RSQLite::SQLite(), here::here('data/coho_harvest_estimator.db'))
+
   DBI::dbWriteTable(con, "coho_estimates", derby_db, append = T)
   DBI::dbDisconnect(con)
   
